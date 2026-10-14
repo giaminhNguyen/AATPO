@@ -21,6 +21,9 @@ class AgentRunResult(BaseModel):
     provider_session_id: str | None = None  # only when reliably parsed
     exit_code: int = 0
     error: str | None = None
+    error_kind: str | None = None  # quota | timeout | cancelled | None
+    timed_out: bool = False
+    cancelled: bool = False
 
 
 class ProviderCapabilities(BaseModel):
@@ -28,6 +31,7 @@ class ProviderCapabilities(BaseModel):
     status: str  # missing|not_authenticated|quota_exhausted|unsupported_version|unhealthy|ready|unknown
     version: str | None = None
     supports_exact_resume: bool = False
+    detail: str | None = None
 
 
 class CLIAdapter(Protocol):
