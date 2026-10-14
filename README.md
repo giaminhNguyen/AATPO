@@ -1,7 +1,7 @@
 # AATPO — Văn phòng AI (Windows Desktop)
 
 Ứng dụng desktop (PySide6) giao việc bằng tiếng Việt cho các trợ lý AI chạy qua CLI chính thức đã đăng nhập.
-Đặc tả: `AATPO_V4_1_GUI_First_Auto_Git_Coding_Agent_Input.md`. **Trạng thái: milestone G0 (khung GUI + lõi). Chưa phải MVP hoàn chỉnh.**
+Đặc tả: `AATPO_V4_1_GUI_First_Auto_Git_Coding_Agent_Input.md`. **Trạng thái: G0 xong (đã vào `main`); G1 làm gần xong, chờ thử yêu cầu thật (nhánh `feat/g1-cli-runtime`). Chưa phải MVP hoàn chỉnh.**
 
 ## Chạy (phát triển)
 
@@ -17,4 +17,5 @@ Dữ liệu ứng dụng nằm ở `%LOCALAPPDATA%\AATPO` (đặt biến `AATPO_
 ## Tài liệu
 - `docs/decisions.md` — quyết định kỹ thuật
 - `docs/git_workflow.md` — chính sách Git tự động (chỉ local, không push)
-- `docs/milestone_reports/G0.md` — báo cáo milestone
+- `docs/milestone_reports/G0.md`, `G1.md` — báo cáo milestone
+- `docs/cli_compatibility.md` — CLI nào đã thật sự được kiểm tra

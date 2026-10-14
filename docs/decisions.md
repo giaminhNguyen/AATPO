@@ -12,3 +12,8 @@
 | D8 | Version is checked **before** transition validity, so a stale claimer gets `ConflictError` | Distinguishes lost races from illegal moves |
 | D9 | Chat input on the home page is visibly disabled with a "G2" note rather than faked | Spec 11: no fabricated functionality |
 | D10 | Project registration is blocking (a quick `git` subprocess) on the Qt thread in G0 | Sub-second; moves to the background-job bridge when real CLI runs land in G1 |
+| D11 | Migration runner turns `foreign_keys` OFF, applies the migration, runs `foreign_key_check`, turns it ON (SQLite's table-rebuild recipe); `defer_foreign_keys` was tried and does not work for DROP of a populated parent | Test with real rows caught it |
+| D12 | Fallback session = new `agent_sessions` row (`generation+1`, `supersedes_session_id`, `fallback_reason`, `handoff_brief`) under the SAME assignment; migration 002 | Spec 3.4: new session with brief, never a guessed id |
+| D13 | Real-provider smoke is consent-gated in `run_readonly_smoke(consent=...)` (service layer) and also by a GUI dialog; each click creates a new work order/task, hence a new session | Spec G1: opt-in; new task => new session |
+| D14 | Provider "ready" = installed + required flags present + the CLI's own local login-status command succeeds. It does NOT prove quota remains | Probe must not call a model |
+| D15 | Codex session id is stored only if `thread.started.thread_id` parses; the final text prefers the `-o` file | Spec 3.4/3.5 |
