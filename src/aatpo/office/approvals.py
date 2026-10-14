@@ -41,7 +41,7 @@ class ApprovalService:
         """Create a pending approval for this scope version; older pending ones are superseded."""
         with self.db.tx() as c:
             wo = c.execute("SELECT * FROM work_orders WHERE work_order_id=?", (work_order_id,)).fetchone()
-            scopes = c.execute("SELECT * FROM scopes WHERE work_order_id=? AND version=? ORDER BY option_key",
+            scopes = c.execute("SELECT * FROM scopes WHERE work_order_id=? AND version=? ORDER BY option_key DESC",
                                (work_order_id, version)).fetchall()
             if not scopes:
                 raise ApprovalError("Chưa có phạm vi để duyệt")

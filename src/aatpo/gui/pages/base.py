@@ -6,6 +6,17 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from aatpo.services import Services
 
 
+def clear_layout(layout) -> None:
+    """Remove widgets NOW (hide + unparent), then free them; deleteLater alone leaves ghosts on screen."""
+    while layout.count():
+        item = layout.takeAt(0)
+        w = item.widget()
+        if w is not None:
+            w.hide()
+            w.setParent(None)
+            w.deleteLater()
+
+
 class Page(QWidget):
     """Base page: has the shared services and a refresh() called on show / data change."""
     title_vi = ""

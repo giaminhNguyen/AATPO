@@ -33,6 +33,12 @@ def step():
     while time.time() < end and not win.pages["settings"].recheck.isEnabled():
         app.processEvents()
         time.sleep(0.05)
+    home = win.pages["home"]
+    for msg in ("Tôi cần làm ứng dụng quản lý kho đơn giản", "Tôi chưa biết, hãy đề xuất"):
+        home.send_text(msg)
+        while home.pending:
+            app.processEvents()
+            time.sleep(0.02)
     win.refresh_all()
     for i, key in enumerate(win.keys):
         win.go(key)

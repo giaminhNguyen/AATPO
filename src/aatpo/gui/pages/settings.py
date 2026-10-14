@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout,
+    QCheckBox, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
 
 from aatpo.agents.smoke import run_readonly_smoke
 from aatpo.cli.probe import STATUS_VI, probe_all
+from aatpo.customer.intent_router import LLMIntentProposer, RuleIntentProposer
+from aatpo.customer.llm_ask import make_asker, ready_provider
 from aatpo.gui.pages.base import Page
 
 NAMES = {"codex": "Codex", "claude": "Claude Code", "gemini": "Gemini", "fake": "Trợ lý giả lập"}
@@ -41,6 +43,9 @@ class SettingsPage(Page):
             lay.addWidget(btn)
             self.rows[pid] = (label, btn)
             self.root.addWidget(box)
+        self.llm = QCheckBox("Dùng trợ lý AI để hiểu câu lệnh phức tạp (tin nhắn của bạn sẽ được gửi tới dịch vụ AI)")
+        self.llm.toggled.connect(self.on_llm_toggled)
+        self.root.addWidget(self.llm)
         self.busy = QLabel("")
         self.root.addWidget(self.busy)
         self.answer = QPlainTextEdit()
@@ -73,6 +78,51 @@ class SettingsPage(Page):
         self.recheck.setEnabled(False)
         self.busy.setText("Đang kiểm tra các trợ lý AI trên máy…")
         self.win.jobs.submit("probe", lambda: probe_all(self.services.adapters, self.services.db))
+
+    # -- optional LLM intent understanding (off by default; consent stored locally) --
+    KEY = "llm_intent_provider"
+
+    def _stored(self) -> str | None:
+        with self.services.db.lock:
+            r = self.services.db.conn.execute("SELECT value FROM app_state WHERE key=?", (self.KEY,)).fetchone()
+        return r["value"] if r else None
+
+    def _store(self, value: str | None) -> None:
+        with self.services.db.tx() as c:
+            if value:
+                c.execute("INSERT INTO app_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                          (self.KEY, value))
+            else:
+                c.execute("DELETE FROM app_state WHERE key=?", (self.KEY,))
+
+    def apply_llm_setting(self) -> None:
+        """Called after each probe: enable only if consent is stored AND that provider is ready now."""
+        pid = self._stored()
+        on = bool(pid) and self.services.provider_statuses().get(pid, ("", None))[0] == "ready"
+        self.services.chat.proposer = (LLMIntentProposer(make_asker(self.services, pid)) if on else RuleIntentProposer())
+        self.llm.blockSignals(True)
+        self.llm.setChecked(on)
+        self.llm.blockSignals(False)
+
+    def confirm_llm_consent(self, provider_id: str) -> bool:
+        return QMessageBox.question(
+            self, "Xác nhận gửi dữ liệu",
+            f"Khi bật, mỗi tin nhắn bạn gửi trong ô trò chuyện sẽ được gửi tới dịch vụ AI của {NAMES.get(provider_id, provider_id)} "
+            "để hiểu ý bạn, và có thể tính vào hạn mức sử dụng. Trợ lý chỉ được ĐỌC thư mục dự án đang chọn.\n\n"
+            "Bạn có thể tắt bất cứ lúc nào. Bạn đồng ý bật?", QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No) == QMessageBox.Yes
+
+    def on_llm_toggled(self, checked: bool) -> None:
+        if not checked:
+            self._store(None)
+            self.apply_llm_setting()
+            return
+        pid = ready_provider(self.services)
+        if pid is None:
+            QMessageBox.information(self, "AATPO", "Chưa có trợ lý AI nào sẵn sàng (Claude hoặc Codex).")
+        elif self.confirm_llm_consent(pid):
+            self._store(pid)
+        self.apply_llm_setting()
 
     # -- smoke --
     def confirm_consent(self, provider_id: str) -> bool:
@@ -112,6 +162,7 @@ class SettingsPage(Page):
         if key == "probe":
             self.recheck.setEnabled(True)
             self.busy.setText("" if exc is None else "Không kiểm tra được trợ lý AI.")
+            self.apply_llm_setting()
             self.win.refresh_all()
         elif key == "smoke":
             self.running_run = None

@@ -71,6 +71,9 @@ class MainWindow(QMainWindow):
 
     def refresh_all(self) -> None:
         p = self.services.registry.selected()
-        self.header.setText(f"AATPO   |   Dự án: {p.display_name if p else 'chưa chọn'}   |   Trạng thái: Sẵn sàng")
+        n = len(self.services.approvals.pending())
+        state = f"Cần bạn xác nhận ({n})" if n else "Sẵn sàng"
+        self.header.setText(f"AATPO   |   Dự án: {p.display_name if p else 'chưa chọn'}   |   Trạng thái: {state}")
+        self.nav.item(self.keys.index("approvals")).setText("Cần bạn quyết định" + (f" ({n})" if n else ""))
         for page in self.pages.values():
             page.refresh()

@@ -17,3 +17,9 @@
 | D13 | Real-provider smoke is consent-gated in `run_readonly_smoke(consent=...)` (service layer) and also by a GUI dialog; each click creates a new work order/task, hence a new session | Spec G1: opt-in; new task => new session |
 | D14 | Provider "ready" = installed + required flags present + the CLI's own local login-status command succeeds. It does NOT prove quota remains | Probe must not call a model |
 | D15 | Codex session id is stored only if `thread.started.thread_id` parses; the final text prefers the `-o` file | Spec 3.4/3.5 |
+| D16 | Discovery asks exactly ONE question (domain-specific) before proposing scope; more questions would add turns without changing the two options in this MVP | Spec G2: one highest-impact question per turn |
+| D17 | Chat text can never approve: approve phrases are intercepted by rules before any model, models may not even propose `approve_attempt`, and `SCOPE_CONFIRMED` is reachable only via `ApprovalService.decide` (GUI buttons) | Spec 2.2 / A07 / A22 |
+| D18 | LLM intent understanding is OFF by default, enabled per-user with a consent dialog (stored in `app_state`), re-validated after every probe, preferring Claude then Codex; any LLM failure falls back to rules | Owner preference + spec 2.2 |
+| D19 | Every LLM intent call = new task = new session under a per-project "Hội thoại" work order; the prompt carries only the current project name and the fenced user text | Spec 3.4 session isolation, A24 |
+| D20 | While a clarification is pending, only housekeeping commands (progress, pause, open/create project) are interpreted as commands; everything else is the answer (data) | Prevents "answer" text acting as a command |
+| D21 | `clear_layout()` hides and unparents widgets before `deleteLater()` | Native screenshot showed ghost buttons otherwise |
