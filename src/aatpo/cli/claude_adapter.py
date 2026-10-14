@@ -7,7 +7,7 @@ from pathlib import Path
 
 from aatpo.cli.base import AgentRunRequest, AgentRunResult, ProviderCapabilities
 from aatpo.cli.parsers import parse_claude
-from aatpo.cli.subprocess_adapter import SubprocessAdapter
+from aatpo.cli.subprocess_adapter import VERIFIED_RESUME, SubprocessAdapter
 from aatpo.cli.windows_launcher import ProcResult
 
 REQUIRED_FLAGS = ("--print", "--output-format", "--permission-mode", "--resume", "--tools")
@@ -38,7 +38,7 @@ class ClaudeAdapter(SubprocessAdapter):
         if not all(flag in h.stdout for flag in REQUIRED_FLAGS):
             return ProviderCapabilities(provider_id=pid, status="unsupported_version", version=version,
                                         detail="thiếu cờ cần thiết trong `claude --help`")
-        self.supports_exact_resume = True
+        self.supports_exact_resume = pid in VERIFIED_RESUME  # flag exists in --help, but not yet proven
         auth = await self._quick("auth", "status")
         status = "unknown"
         if auth and auth.exit_code is not None:
@@ -46,4 +46,5 @@ class ClaudeAdapter(SubprocessAdapter):
                 status = "ready" if json.loads(auth.stdout).get("loggedIn") is True else "not_authenticated"
             except (ValueError, AttributeError):
                 status = "unknown"
-        return ProviderCapabilities(provider_id=pid, status=status, version=version, supports_exact_resume=True)
+        return ProviderCapabilities(provider_id=pid, status=status, version=version,
+                                    supports_exact_resume=self.supports_exact_resume)

@@ -14,6 +14,11 @@ from aatpo.cli.windows_launcher import LaunchError, ProcResult, resolve_executab
 from aatpo.telemetry.redaction import redact
 
 
+# Exact resume is only trusted for providers whose resume was exercised end to end on this machine
+# (spec 3.4 / G1). Empty until verified; unverified providers fall back to a fresh session + brief.
+VERIFIED_RESUME: set[str] = set()
+
+
 class SubprocessAdapter:
     provider_id = ""
     exe_name = ""

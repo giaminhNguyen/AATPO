@@ -6,7 +6,7 @@ from pathlib import Path
 
 from aatpo.cli.base import AgentRunRequest, AgentRunResult, ProviderCapabilities
 from aatpo.cli.parsers import parse_codex
-from aatpo.cli.subprocess_adapter import SubprocessAdapter
+from aatpo.cli.subprocess_adapter import VERIFIED_RESUME, SubprocessAdapter
 from aatpo.cli.windows_launcher import ProcResult
 
 REQUIRED_RUN_FLAGS = ("--json", "--sandbox", "--output-last-message", "--skip-git-repo-check")
@@ -43,7 +43,7 @@ class CodexAdapter(SubprocessAdapter):
             return ProviderCapabilities(provider_id=pid, status="unsupported_version", version=version,
                                         detail="thiếu cờ cần thiết trong `codex exec --help`")
         r = await self._quick("exec", "resume", "--help")
-        self.supports_exact_resume = bool(r and r.exit_code == 0 and "--json" in r.stdout)
+        self.supports_exact_resume = bool(r and r.exit_code == 0 and "--json" in r.stdout) and pid in VERIFIED_RESUME
         auth = await self._quick("login", "status")
         if auth is None or auth.exit_code is None:
             status = "unknown"

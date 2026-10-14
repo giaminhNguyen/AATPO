@@ -4,8 +4,8 @@ Host: Windows 11 Pro 10.0.26200. Rows describe what was **actually run**; "UNVER
 
 | Provider | Version | Local probe (`--version`, `--help`, auth status) | Real model request | Exact session resume |
 |---|---|---|---|---|
-| Codex | codex-cli 0.160.0 (`.exe`) | verified: `ready` (`codex login status` exit 0) | **UNVERIFIED** (needs owner consent in GUI; consumes quota) | flags present in `codex exec resume --help`; **UNVERIFIED** end to end |
-| Claude Code | 2.1.299 (`.exe`) | verified: `ready` (`claude auth status` → `loggedIn: true`; only the boolean is read) | **UNVERIFIED** (same) | `--resume <id>` in `--help`; **UNVERIFIED** end to end |
+| Codex | codex-cli 0.160.0 (`.exe`) | verified: `ready` (`codex login status` exit 0) | **UNVERIFIED** | flags present in `codex exec resume --help`; **UNVERIFIED** end to end → disabled |
+| Claude Code | 2.1.299 (`.exe`) | verified: `ready` (`claude auth status` → `loggedIn: true`; only the boolean is read) | **verified 2026-10-14** (read-only, scratch folder; `result` text + `session_id` UUID parsed; files untouched) | `--resume <id>` in `--help`; **UNVERIFIED** end to end → disabled |
 | Gemini CLI | not installed | verified: `missing`; adapter is a skeleton (cannot run) | n/a | n/a |
 
 ## Command templates (fixed in code; prompt only on stdin)
@@ -14,7 +14,10 @@ Host: Windows 11 Pro 10.0.26200. Rows describe what was **actually run**; "UNVER
 - Claude run: `claude -p --output-format json --permission-mode plan --tools Read,Grep,Glob` (cwd = project); resume adds `--resume <session_id>`
 - Never used: `--dangerously-bypass-approvals-and-sandbox`, `--dangerously-skip-permissions`, `--yolo`.
 
-## Parser assumptions to confirm at first real run
+## Parser status
+- Claude JSON: **confirmed against a real run**. Codex JSONL: still an assumption.
+
+## Parser assumptions (Codex still unconfirmed)
 - Codex JSONL: `thread.started{thread_id}`, `item.completed{item:{type:"agent_message",text}}`, `error` / `turn.failed`. Final text prefers the `-o` file. If `thread_id` is absent, **no session id is stored** and rework starts a new session (safe fallback).
 - Claude JSON: object (or event array) with `result`, `session_id`, `is_error`.
 These come from CLI help and general knowledge of the formats, **not** from a captured real run; fake-CLI tests prove parsing logic, not format accuracy.

@@ -263,3 +263,9 @@ def test_migration_preserves_existing_sessions(tmp_path):
     assert db.conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert list((tmp_path / "bk").glob("office-v1-*.db"))                      # backup before migrating
     db.close()
+
+
+def test_real_adapters_do_not_claim_unverified_resume():
+    from aatpo.cli.subprocess_adapter import VERIFIED_RESUME
+    assert VERIFIED_RESUME == set()
+    assert ClaudeAdapter().supports_exact_resume is False and CodexAdapter().supports_exact_resume is False
