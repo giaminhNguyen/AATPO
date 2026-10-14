@@ -393,3 +393,12 @@ def test_read_only_delivery_report_is_honest(tmp_path):
     rep = artifacts.read(svc.db, artifacts.latest(svc.db, last.task_id, "report")["artifact_id"])
     assert "chế độ chỉ đọc" in rep and "chưa có tệp nào bị sửa" in rep and "Chưa có lệnh kiểm thử tự động" in rep
     assert svc.store.get_work_order(wo.work_order_id).integration_status == "not_applicable"
+
+
+def test_detect_command_in_packaged_exe_never_suggests_the_exe_itself(tmp_path, monkeypatch):
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Program Files\AATPO\AATPO.exe")
+    cmd = detect_command(tmp_path)
+    assert "AATPO" not in cmd[0] and cmd[1:3] == ["-m", "pytest"]
+    validate_command(cmd)                       # and the suggestion itself is acceptable to the policy

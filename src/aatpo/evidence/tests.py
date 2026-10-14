@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,7 +50,10 @@ def detect_command(root: Path) -> list[str] | None:
     """Suggestion only; the user confirms it in the GUI before it is ever stored or run."""
     import sys
     if (root / "pytest.ini").exists() or (root / "tests").is_dir() or (root / "pyproject.toml").exists():
-        exe = sys.executable if sys.platform == "win32" else "python3"
+        if getattr(sys, "frozen", False):   # packaged AATPO.exe: sys.executable is AATPO itself, never a Python
+            exe = shutil.which("python") or shutil.which("py") or "python"
+        else:
+            exe = sys.executable if sys.platform == "win32" else "python3"
         return [exe, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
     if (root / "package.json").exists():
         return ["npm", "test"]
