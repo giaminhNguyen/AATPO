@@ -120,6 +120,10 @@ class WorkOrder(_Row):
     version: int
     created_at: str
     updated_at: str
+    kind: str = "general"                  # product | change | general
+    requires_scope_approval: bool = False
+    parent_work_order_id: str | None = None
+    brief: str | None = None
 
 
 class CLIProvider(_Row):

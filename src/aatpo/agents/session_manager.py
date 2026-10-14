@@ -9,6 +9,10 @@ from aatpo.db.repositories import Store
 from aatpo.domain.models import ProcessRun, RunState, new_id
 
 
+class ScopeNotApproved(PermissionError):
+    """Work for a product/change work order was attempted before the user approved its scope."""
+
+
 class SessionManager:
     def __init__(self, store: Store, adapters: dict):
         self.store, self.adapters = store, adapters
@@ -16,6 +20,9 @@ class SessionManager:
     async def execute(self, assignment_id: str, prompt: str, project_root: str, *, brief: str = "",
                       timeout: int = 900, idempotency_key: str | None = None) -> tuple[ProcessRun, AgentRunResult]:
         asg = self.store.get_assignment(assignment_id)
+        wo = self.store.get_work_order(self.store.get_task(asg.task_id).work_order_id)
+        if wo.requires_scope_approval and not self.store.scope_approved(wo.work_order_id):
+            raise ScopeNotApproved("Chưa được duyệt phạm vi nên chưa thể thực hiện")
         adapter = self.adapters[asg.provider_id]
         session = self.store.open_session(assignment_id)
         resume_id = session.provider_session_id

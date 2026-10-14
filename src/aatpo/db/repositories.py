@@ -16,8 +16,18 @@ class ConflictError(RuntimeError):
     """Optimistic-lock failure: someone else changed the row first."""
 
 
+class ApprovalRequired(PermissionError):
+    """An action that needs an explicit, scoped user approval was attempted without it."""
+
+
 class EvidenceRequired(ValueError):
     """Task.DONE needs verified evidence, never just a process success or an AI claim."""
+
+
+def _wo(row) -> WorkOrder:
+    d = dict(row)
+    d["requires_scope_approval"] = bool(d["requires_scope_approval"])
+    return WorkOrder(**d)
 
 
 class Store:
@@ -49,12 +59,16 @@ class Store:
                 c.execute("INSERT OR IGNORE INTO provider_registry(provider_id) VALUES(?)", (p,))
 
     # ---- work orders / tasks ------------------------------------------------------------
-    def create_work_order(self, project_id: str, title: str) -> WorkOrder:
+    def create_work_order(self, project_id: str, title: str, *, kind: str = "general",
+                          requires_scope_approval: bool = False, parent: str | None = None,
+                          brief: str | None = None) -> WorkOrder:
         wid, now = new_id("WO"), utcnow()
         with self.db.tx() as c:
-            c.execute("INSERT INTO work_orders VALUES(?,?,?,?,1,?,?)",
-                      (wid, project_id, title, WorkOrderState.RECEIVED, now, now))
-            self.log_event(c, "work_order.created", "work_order", wid, project_id, title=title)
+            c.execute("INSERT INTO work_orders(work_order_id,project_id,title,state,version,created_at,updated_at,"
+                      "kind,requires_scope_approval,parent_work_order_id,brief) VALUES(?,?,?,?,1,?,?,?,?,?,?)",
+                      (wid, project_id, title, WorkOrderState.RECEIVED, now, now, kind,
+                       int(requires_scope_approval), parent, brief))
+            self.log_event(c, "work_order.created", "work_order", wid, project_id, title=title, wo_kind=kind)
         return self.get_work_order(wid)
 
     def get_work_order(self, wid: str) -> WorkOrder:
@@ -62,30 +76,44 @@ class Store:
             row = self.db.conn.execute("SELECT * FROM work_orders WHERE work_order_id=?", (wid,)).fetchone()
         if row is None:
             raise KeyError(wid)
-        return WorkOrder(**row)
+        return _wo(row)
 
     def list_work_orders(self, project_id: str) -> list[WorkOrder]:
         with self.db.lock:
             rows = self.db.conn.execute(
-                "SELECT * FROM work_orders WHERE project_id=? ORDER BY created_at", (project_id,))
-            return [WorkOrder(**r) for r in rows]
+                "SELECT * FROM work_orders WHERE project_id=? ORDER BY created_at, rowid", (project_id,))
+            return [_wo(r) for r in rows]
 
     def transition_work_order(self, wid: str, to: WorkOrderState, expected_version: int) -> WorkOrder:
+        """Generic transition. SCOPE_CONFIRMED is reachable only through ApprovalService.decide."""
+        if to == WorkOrderState.SCOPE_CONFIRMED:
+            raise ApprovalRequired("SCOPE_CONFIRMED needs an explicit user approval in the GUI")
         with self.db.tx() as c:
-            row = c.execute("SELECT * FROM work_orders WHERE work_order_id=?", (wid,)).fetchone()
-            if row is None:
-                raise KeyError(wid)
-            if row["version"] != expected_version:
-                raise ConflictError(f"work order {wid} changed concurrently")
-            sm.check(sm.WORK_ORDER, WorkOrderState(row["state"]), to)
-            n = c.execute(
-                "UPDATE work_orders SET state=?, version=version+1, updated_at=? "
-                "WHERE work_order_id=? AND version=?", (to, utcnow(), wid, expected_version)).rowcount
-            if n == 0:
-                raise ConflictError(f"work order {wid} changed concurrently")
-            self.log_event(c, "work_order.transition", "work_order", wid, row["project_id"],
-                           src=row["state"], dst=str(to))
+            self.transition_work_order_in_tx(c, wid, to, expected_version)
         return self.get_work_order(wid)
+
+    def transition_work_order_in_tx(self, c, wid: str, to: WorkOrderState, expected_version: int) -> None:
+        row = c.execute("SELECT * FROM work_orders WHERE work_order_id=?", (wid,)).fetchone()
+        if row is None:
+            raise KeyError(wid)
+        if row["version"] != expected_version:
+            raise ConflictError(f"work order {wid} changed concurrently")
+        sm.check(sm.WORK_ORDER, WorkOrderState(row["state"]), to)
+        n = c.execute("UPDATE work_orders SET state=?, version=version+1, updated_at=? "
+                      "WHERE work_order_id=? AND version=?", (to, utcnow(), wid, expected_version)).rowcount
+        if n == 0:
+            raise ConflictError(f"work order {wid} changed concurrently")
+        self.log_event(c, "work_order.transition", "work_order", wid, row["project_id"],
+                       src=row["state"], dst=str(to))
+
+    def scope_approved(self, work_order_id: str) -> bool:
+        """True iff the user approved the CURRENT scope version of this work order."""
+        with self.db.lock:
+            r = self.db.conn.execute(
+                "SELECT 1 FROM approvals a WHERE a.work_order_id=? AND a.kind='scope' AND a.status='approved' "
+                "AND a.scope_version=(SELECT MAX(version) FROM scopes WHERE work_order_id=a.work_order_id)",
+                (work_order_id,)).fetchone()
+        return r is not None
 
     def create_task(self, work_order_id: str, title: str) -> Task:
         tid, now = new_id("TASK"), utcnow()

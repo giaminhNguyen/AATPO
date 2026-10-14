@@ -6,8 +6,10 @@ from pathlib import Path
 
 from aatpo.agents.session_manager import SessionManager
 from aatpo.cli.probe import STATUS_VI, default_adapters
+from aatpo.customer.representative import ChatService
 from aatpo.db.connection import Database
 from aatpo.db.repositories import Store
+from aatpo.office.approvals import ApprovalService
 from aatpo.projects.git_service import GitService
 from aatpo.projects.registry import ProjectRegistry
 from aatpo.settings import AppPaths
@@ -22,6 +24,8 @@ class Services:
     registry: ProjectRegistry
     adapters: dict
     sessions: SessionManager
+    approvals: ApprovalService
+    chat: ChatService
 
     @classmethod
     def create(cls, paths: AppPaths, git_exe: str | None = None, adapters: dict | None = None) -> "Services":
@@ -31,7 +35,10 @@ class Services:
         store.reconcile_after_restart()  # RUNNING work from a previous crash -> UNKNOWN, never replayed
         git = GitService(git_exe)
         adapters = default_adapters() if adapters is None else adapters
-        return cls(paths, db, store, git, ProjectRegistry(store, git), adapters, SessionManager(store, adapters))
+        registry = ProjectRegistry(store, git)
+        approvals = ApprovalService(store)
+        return cls(paths, db, store, git, registry, adapters, SessionManager(store, adapters), approvals,
+                   ChatService(store, registry, approvals))
 
     def provider_statuses(self) -> dict[str, tuple[str, str | None]]:
         """provider_id -> (status, version) as last probed (local checks only)."""
