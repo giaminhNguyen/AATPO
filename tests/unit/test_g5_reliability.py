@@ -321,3 +321,22 @@ def test_incompatible_old_cli_is_reported_not_used(tmp_path):
 
 def test_concurrency_stays_at_one_by_default():
     assert OfficeConfig().concurrency == 1
+
+
+def test_error_before_any_process_started_leaves_nothing_uncertain(tmp_path, monkeypatch):
+    ag = Agent([fix])
+    svc, p, root = world(tmp_path, ag)
+    wo = approved(svc, p, "Sửa lỗi hàm cộng hai số")
+    svc.manager.create_plan(wo.work_order_id)
+    import aatpo.office.manager as m
+
+    def boom(*a, **k):
+        raise FileNotFoundError("role profile missing")
+    monkeypatch.setattr(m, "build_task_prompt", boom)           # fails after RUNNING, before any run exists
+    res = go(svc.manager.run_work_order(wo.work_order_id))
+    assert res.outcome == "blocked" and "FileNotFoundError" in res.message
+    assert tasks_by_key(svc, wo)["implement"].state == T.READY and svc.approvals.pending() == []     # no needless approval
+    assert svc.db.conn.execute("SELECT count(*) FROM process_runs").fetchone()[0] == 0
+    monkeypatch.undo()
+    svc.manager.resume(wo.work_order_id)
+    assert go(svc.manager.run_work_order(wo.work_order_id)).outcome == "completed"

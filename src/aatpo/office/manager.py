@@ -194,9 +194,13 @@ class OfficeManager:
             try:
                 if t.state == T.CLAIMED:
                     self.store.transition_task(t.task_id, T.READY, t.version)
-                elif t.state == T.RUNNING:   # a process may or may not have finished: uncertain => needs the user's approval
-                    self.store.transition_task(t.task_id, T.UNKNOWN_AFTER_CRASH, t.version)
-                    self.approvals.request_rerun(t.task_id)
+                elif t.state == T.RUNNING:
+                    if self._runs_for(task_id=t.task_id) == 0:   # failed before any process was ever started: nothing is uncertain
+                        t = self.store.transition_task(t.task_id, T.PAUSED, t.version)
+                        self.store.transition_task(t.task_id, T.READY, t.version)
+                    else:   # a process may or may not have finished: uncertain => needs the user's approval
+                        self.store.transition_task(t.task_id, T.UNKNOWN_AFTER_CRASH, t.version)
+                        self.approvals.request_rerun(t.task_id)
             except Exception:
                 pass
         with self.db.tx() as c:
