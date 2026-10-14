@@ -123,6 +123,9 @@ class HomePage(Page):
             self.win.go("approvals")
         elif a.kind == "view_progress":
             self.win.go("tasks")
+        elif a.kind == "start_run":
+            self.win.go("tasks")
+            self.win.pages["tasks"].start(a.payload["work_order_id"])
 
     def _go_projects(self, create: bool) -> None:
         self.win.go("projects")

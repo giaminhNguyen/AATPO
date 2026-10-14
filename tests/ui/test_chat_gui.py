@@ -83,7 +83,7 @@ def test_full_gui_flow_question_unknown_options_and_click_approval(qapp, tmp_pat
     w2 = MainWindow(svc2, auto_probe=False)
     assert "bạn đồng ý phương án “Tiết kiệm”" in w2.pages["home"].transcript.toPlainText()
     assert svc2.store.scope_approved(wo.work_order_id)
-    assert "Công việc" in w2.pages["tasks"].title_vi and w2.pages["tasks"].list.count() == 1
+    assert "Công việc" in w2.pages["tasks"].title_vi and w2.pages["tasks"].tree.topLevelItemCount() == 1
     w2.close()
     svc2.close()
 

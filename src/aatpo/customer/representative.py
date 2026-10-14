@@ -81,6 +81,10 @@ class ChatService:
                 return self._answer(wo, text)
             intent = meta
         intent = intent or await self.proposer.propose(text, project.display_name if project else None)
+        if intent.action == "pause_work" and project and wo and wo.state == W.EXECUTING and self.manager is not None:
+            await self.manager.pause(wo.work_order_id)   # safe cooperative pause; state is shown once it settles
+            return ChatReply(text="Tôi đã yêu cầu dừng an toàn công việc đang chạy. Bạn có thể bấm “Tiếp tục” ở mục Công việc "
+                                  "khi muốn chạy lại.", actions=[UiAction(kind="view_progress", label="Xem tình trạng")])
         return self._act(intent, text, project, wo)
 
     # ---- deterministic action policy --------------------------------------------------------

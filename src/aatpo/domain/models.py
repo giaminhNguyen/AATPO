@@ -124,6 +124,8 @@ class WorkOrder(_Row):
     requires_scope_approval: bool = False
     parent_work_order_id: str | None = None
     brief: str | None = None
+    plan_mode: str | None = None
+    pause_requested: bool = False
 
 
 class CLIProvider(_Row):

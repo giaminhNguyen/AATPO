@@ -33,6 +33,7 @@ def _task(row) -> Task:
 def _wo(row) -> WorkOrder:
     d = dict(row)
     d["requires_scope_approval"] = bool(d["requires_scope_approval"])
+    d["pause_requested"] = bool(d["pause_requested"])
     return WorkOrder(**d)
 
 

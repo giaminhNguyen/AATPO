@@ -23,3 +23,9 @@
 | D19 | Every LLM intent call = new task = new session under a per-project "Hội thoại" work order; the prompt carries only the current project name and the fenced user text | Spec 3.4 session isolation, A24 |
 | D20 | While a clarification is pending, only housekeeping commands (progress, pause, open/create project) are interpreted as commands; everything else is the answer (data) | Prevents "answer" text acting as a command |
 | D21 | `clear_layout()` hides and unparents widgets before `deleteLater()` | Native screenshot showed ghost buttons otherwise |
+| D22 | Provider preference default is `claude, codex, gemini` (owner: Claude first); spec default was `codex, gemini, claude`. Config can override, cannot enable push/history rewrite | Owner instruction |
+| D23 | Every task that `writes` must be depended on by a QA task (plan validator); non-writing tasks (analysis/design/packaging) reach DONE only via a verified artifact (exists, non-empty, SHA-256, same task) | "QA says yes" or "run succeeded" alone is never evidence |
+| D24 | QA tasks may start when their dependencies are in REVIEW (not DONE); QA's verdict is the only thing that moves a writes-task REVIEW→DONE/REWORK. Verdict = first line exactly `VERDICT: PASS|FAIL`, anything else is not a pass | Breaks the DONE↔QA dependency cycle without trusting free text |
+| D25 | Rework exhaustion goes REVIEW→FAILED directly (state machine has no REWORK→FAILED) with `rework_count` recorded | Keeps transition table minimal |
+| D26 | G3 runs read-only adapters: write tasks yield a concrete PROPOSAL; branch creation for write tasks is implemented and tested (`write_mode=True`) but OFF until G4 enables real writes | Avoids moving the user's checkout for no benefit; real run showed QA correctly rejects "fixes" that were never applied |
+| D27 | Restart: CLAIMED→READY, RUNNING→UNKNOWN_AFTER_CRASH + a `rerun` approval; locks of uncertain tasks are kept | Spec 6.1 / A23 |

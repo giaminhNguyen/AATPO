@@ -6,6 +6,10 @@ from aatpo.agents.profiles import profile
 from aatpo.domain.models import Task, WorkOrder
 
 MAX_DATA = 6000
+READ_ONLY_NOTE = ("Lưu ý về chế độ chỉ đọc: hệ thống chưa áp dụng thay đổi vào tệp ở giai đoạn này. Công việc “thực hiện” chỉ cần "
+                  "đưa ra BẢN ĐỀ XUẤT thay đổi cụ thể (đoạn mã/diff, đúng tệp, đúng chỗ) cùng cách kiểm thử, và không được tuyên bố "
+                  "là đã sửa. Bước “kiểm tra” đánh giá tính đúng đắn, cụ thể và kiểm chứng được của đề xuất đó dựa trên mã trong "
+                  "thư mục dự án; không đòi hỏi tệp đã bị sửa.")
 
 
 def fence(label: str, text: str) -> str:
@@ -21,6 +25,7 @@ def build_task_prompt(wo: WorkOrder, task: Task, *, scope_text: str, inputs: lis
              f"\n## Công việc: {task.title}",
              f"Tiêu chí nghiệm thu: {task.acceptance}",
              "Chế độ: " + ("CHỈ ĐỌC — không sửa, tạo hay xóa tệp." if read_only else "được sửa tệp trong phạm vi công việc."),
+             *([READ_ONLY_NOTE] if read_only else []),
              fence("yêu cầu gốc của khách", wo.brief or wo.title),
              fence("phạm vi đã được khách duyệt", scope_text)]
     for label, text in inputs:

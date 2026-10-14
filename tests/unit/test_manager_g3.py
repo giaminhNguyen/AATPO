@@ -548,3 +548,14 @@ def test_chat_start_creates_plan_after_approval_only(tmp_path):
     svc.approvals.decide(svc.approvals.pending(p.project_id)[0].approval_id, True, "balanced")
     r = say(svc, "Bắt đầu làm")
     assert r.actions[0].kind == "start_run" and svc.store.get_work_order(wo.work_order_id).state == W.PLANNED
+
+
+def test_read_only_prompt_asks_for_proposal_not_for_edits(tmp_path):
+    svc, p = make(tmp_path, Script())
+    wo = approved(svc, p, "Sửa lỗi đăng nhập")
+    svc.manager.create_plan(wo.work_order_id)
+    wo = svc.store.get_work_order(wo.work_order_id)
+    t = tasks_by_key(svc, wo)["implement"]
+    ro = build_task_prompt(wo, t, scope_text="s", inputs=[], read_only=True)
+    rw = build_task_prompt(wo, t, scope_text="s", inputs=[], read_only=False)
+    assert "BẢN ĐỀ XUẤT" in ro and "CHỈ ĐỌC" in ro and "BẢN ĐỀ XUẤT" not in rw and "được sửa tệp" in rw
