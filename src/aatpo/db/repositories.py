@@ -145,25 +145,52 @@ class Store:
                 "SELECT * FROM assignments WHERE assignment_id=?", (aid,)).fetchone())
 
     def open_session(self, assignment_id: str) -> AgentSession:
-        """Exactly one session per assignment; scope fields are derived, never caller-supplied,
-        so a session cannot be attached to the wrong task/project/role/provider."""
+        """Latest session of an assignment (created on first use). Scope fields are derived from
+        the assignment, never caller-supplied, so a session cannot be attached to the wrong
+        task/project/role/provider."""
         with self.db.tx() as c:
-            row = c.execute(
-                "SELECT a.*, t.work_order_id, w.project_id FROM assignments a "
-                "JOIN tasks t USING(task_id) JOIN work_orders w USING(work_order_id) "
-                "WHERE a.assignment_id=?", (assignment_id,)).fetchone()
-            if row is None:
-                raise KeyError(assignment_id)
-            existing = c.execute("SELECT * FROM agent_sessions WHERE assignment_id=?", (assignment_id,)).fetchone()
+            existing = self._latest_session(c, assignment_id)
             if existing:
-                return AgentSession(**existing)
-            sid = new_id("SESS")
-            c.execute("INSERT INTO agent_sessions(session_id,assignment_id,project_id,work_order_id,task_id,"
-                      "role_id,provider_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                      (sid, assignment_id, row["project_id"], row["work_order_id"], row["task_id"],
-                       row["role_id"], row["provider_id"], utcnow()))
-            self.log_event(c, "session.opened", "session", sid, row["project_id"], task_id=row["task_id"])
-            return AgentSession(**c.execute("SELECT * FROM agent_sessions WHERE session_id=?", (sid,)).fetchone())
+                return existing
+            return self._insert_session(c, assignment_id, 1, None, None, None)
+
+    def start_fallback_session(self, assignment_id: str, reason: str, brief: str) -> AgentSession:
+        """Exact resume unsupported/broken: record why, start a NEW session with a compact brief."""
+        with self.db.tx() as c:
+            prev = self._latest_session(c, assignment_id)
+            if prev is None:
+                raise KeyError(assignment_id)
+            s = self._insert_session(c, assignment_id, prev.generation + 1, prev.session_id, reason, brief)
+            self.log_event(c, "session.fallback", "session", s.session_id, s.project_id, reason=reason,
+                           supersedes=prev.session_id)
+            return s
+
+    @staticmethod
+    def _latest_session(c, assignment_id: str) -> AgentSession | None:
+        row = c.execute("SELECT * FROM agent_sessions WHERE assignment_id=? ORDER BY generation DESC LIMIT 1",
+                        (assignment_id,)).fetchone()
+        return AgentSession(**row) if row else None
+
+    def _insert_session(self, c, assignment_id, generation, supersedes, reason, brief) -> AgentSession:
+        row = c.execute(
+            "SELECT a.*, t.work_order_id, w.project_id FROM assignments a "
+            "JOIN tasks t USING(task_id) JOIN work_orders w USING(work_order_id) "
+            "WHERE a.assignment_id=?", (assignment_id,)).fetchone()
+        if row is None:
+            raise KeyError(assignment_id)
+        sid = new_id("SESS")
+        c.execute("INSERT INTO agent_sessions(session_id,assignment_id,project_id,work_order_id,task_id,"
+                  "role_id,provider_id,created_at,generation,supersedes_session_id,fallback_reason,handoff_brief)"
+                  " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (sid, assignment_id, row["project_id"], row["work_order_id"], row["task_id"],
+                   row["role_id"], row["provider_id"], utcnow(), generation, supersedes, reason, brief))
+        self.log_event(c, "session.opened", "session", sid, row["project_id"], task_id=row["task_id"])
+        return AgentSession(**c.execute("SELECT * FROM agent_sessions WHERE session_id=?", (sid,)).fetchone())
+
+    def get_session(self, session_id: str) -> AgentSession:
+        with self.db.lock:
+            return AgentSession(**self.db.conn.execute(
+                "SELECT * FROM agent_sessions WHERE session_id=?", (session_id,)).fetchone())
 
     def set_provider_session_id(self, session_id: str, provider_session_id: str) -> None:
         with self.db.tx() as c:

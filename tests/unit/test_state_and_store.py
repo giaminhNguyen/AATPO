@@ -106,7 +106,7 @@ def test_reconcile_marks_running_unknown_not_replayed(svc, proj):
 
 
 def test_schema_version_and_fk(svc):
-    assert svc.db.conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert svc.db.conn.execute("PRAGMA user_version").fetchone()[0] == 2
     with pytest.raises(sqlite3.IntegrityError):
         svc.store.create_work_order("PRJ-missing", "x")
 

@@ -163,6 +163,10 @@ class AgentSession(_Row):
     provider_id: str
     provider_session_id: str | None = None
     created_at: str
+    generation: int = 1
+    supersedes_session_id: str | None = None
+    fallback_reason: str | None = None
+    handoff_brief: str | None = None
 
 
 class ProcessRun(_Row):

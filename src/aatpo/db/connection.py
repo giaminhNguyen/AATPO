@@ -42,8 +42,17 @@ class Database:
             backup_dir.mkdir(parents=True, exist_ok=True)
             self.conn.execute("PRAGMA wal_checkpoint(FULL)")
             shutil.copy2(self.path, backup_dir / f"office-v{current}-{utcnow()[:19].replace(':', '')}.db")
-        for version, sql in pending:
-            self.conn.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version={version};\nCOMMIT;")
+        # SQLite's documented table-rebuild recipe needs FK enforcement off (it cannot change inside a
+        # transaction); integrity is re-verified with foreign_key_check before enforcement is restored.
+        self.conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            for version, sql in pending:
+                self.conn.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version={version};\nCOMMIT;")
+                bad = self.conn.execute("PRAGMA foreign_key_check").fetchall()
+                if bad:
+                    raise sqlite3.IntegrityError(f"migration {version} left {len(bad)} foreign-key violations")
+        finally:
+            self.conn.execute("PRAGMA foreign_keys=ON")
 
     @contextmanager
     def tx(self):
