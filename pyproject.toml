@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aatpo"
+version = "0.1.0"
+description = "Autonomous AI Technology Production Office - Windows desktop app (GUI-first, Vietnamese)"
+requires-python = ">=3.12"
+dependencies = ["PySide6>=6.7", "pydantic>=2.6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.gui-scripts]
+aatpo = "aatpo.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"aatpo.db" = ["migrations/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "unit: pure-python unit test",
+    "mock_integration: uses fake CLI / temp git repos",
+    "windows_integration: needs real Windows facilities",
+    "real_provider: needs a real authenticated CLI",
+    "manual_gui: needs a human at a display",
+]
