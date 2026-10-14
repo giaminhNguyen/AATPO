@@ -20,7 +20,7 @@ def hermetic_git(tmp_path_factory, monkeypatch):
 
 @pytest.fixture
 def svc(tmp_path):
-    s = Services.create(AppPaths(tmp_path / "home"))
+    s = Services.create(AppPaths(tmp_path / "home"), adapters={})
     yield s
     s.close()
 

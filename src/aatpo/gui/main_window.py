@@ -3,13 +3,16 @@ from __future__ import annotations
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from aatpo.gui.pages.home_chat import HomePage
+from aatpo.gui.bridges.background_jobs import BackgroundJobs
 from aatpo.gui.pages.projects import ProjectsPage
+from aatpo.gui.pages.settings import SettingsPage
 from aatpo.gui.pages.tasks import ApprovalsPage, ResultsPage, TasksPage
 from aatpo.services import Services
 
 NAV = (("home", "Văn phòng AI", HomePage), ("projects", "Dự án", ProjectsPage),
        ("tasks", "Công việc", TasksPage), ("approvals", "Cần bạn quyết định", ApprovalsPage),
-       ("results", "Kết quả", ResultsPage))
+       ("results", "Kết quả", ResultsPage),
+       ("settings", "Cài đặt", SettingsPage))
 
 STYLE = """
 QWidget { font-size: 11pt; }
@@ -21,9 +24,10 @@ QPushButton { padding: 6px 12px; }
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, services: Services):
+    def __init__(self, services: Services, auto_probe: bool = True):
         super().__init__()
         self.services = services
+        self.jobs = BackgroundJobs()
         self.setWindowTitle("AATPO — Văn phòng AI")
         self.resize(1100, 700)
         self.setStyleSheet(STYLE)
@@ -51,6 +55,12 @@ class MainWindow(QMainWindow):
         self.nav.currentRowChanged.connect(self._on_nav)
         self.nav.setCurrentRow(0)
         self.refresh_all()
+        if auto_probe:
+            self.pages["settings"].probe()  # local-only checks; no model call, no quota
+
+    def closeEvent(self, e) -> None:
+        self.jobs.shutdown()
+        super().closeEvent(e)
 
     def _on_nav(self, row: int) -> None:
         self.stack.setCurrentIndex(row)

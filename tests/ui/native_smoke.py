@@ -28,6 +28,11 @@ win.show()
 def step():
     p = svc.registry.register(proj, "Quản lý bán hàng", auto_history=True)
     svc.registry.select(p.project_id)
+    import time
+    end = time.time() + 40  # let the REAL local provider probe (no model call) finish
+    while time.time() < end and not win.pages["settings"].recheck.isEnabled():
+        app.processEvents()
+        time.sleep(0.05)
     win.refresh_all()
     for i, key in enumerate(win.keys):
         win.go(key)
