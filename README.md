@@ -1,14 +1,15 @@
 # AATPO — Văn phòng AI (Windows Desktop)
 
 Ứng dụng desktop (PySide6) giao việc bằng tiếng Việt cho các trợ lý AI chạy qua CLI chính thức đã đăng nhập.
-Đặc tả: `AATPO_V4_1_GUI_First_Auto_Git_Coding_Agent_Input.md`. **Trạng thái: G0–G4 xong (G1 có điều kiện); G5 (đóng gói, độ tin cậy) chưa làm. Chưa phải MVP hoàn chỉnh.**
+Đặc tả: `AATPO_V4_1_GUI_First_Auto_Git_Coding_Agent_Input.md`. **Trạng thái: G0–G5 hoàn tất về kỹ thuật (G1 có điều kiện); **chưa phải MVP được nghiệm thu** vì còn các bước cần người thật (xem `docs/milestone_reports/G5.md`).**
 
 ## Chạy (phát triển)
 
 ```powershell
 py -3.13 -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
-.\.venv\Scripts\python -m aatpo          # mở cửa sổ
+.\.venv\Scripts\python -m aatpo          # mở cửa sổ (bản phát triển)
+powershell -File packaginguild.ps1       # tạo dist\AATPO\AATPO.exe (bản đóng gói, không cần Python)
 .\.venv\Scripts\python -m pytest -q      # kiểm thử
 ```
 

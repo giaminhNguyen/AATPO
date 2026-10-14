@@ -38,3 +38,9 @@
 | D34 | Final verification re-runs the test command before PACKAGING; failure ⇒ BLOCKED, no report, no integration | "Never claims success when a test fails" |
 | D35 | Report is built only from recorded state (reviews, test_runs, commits, scope) and always lists what is NOT verified; it is stored as a hashed artifact | Spec 11, 13 |
 | D36 | Revert/undo proposals and the version-history view are deferred to G5 (spec G5 lists the history GUI) | Scope control |
+| D37 | Windows Job Object (kill-on-close) around every CLI child; best effort, never fatal | A crashed AATPO must not leave an agent editing files |
+| D38 | Backups: SQLite online-backup API + integrity_check; restore applied at next start BEFORE the DB opens; pre-restore DB always kept | Never overwrite an open DB |
+| D39 | Undo = approval-gated NEW revert commit for ledger commits only; abort on conflict; never reset | Spec 6.3.B.9 |
+| D40 | `run_work_order` converts unexpected exceptions into a safe BLOCKED state + redacted log + plain message | A popup with a raw SQL error is not acceptable UX or evidence |
+| D41 | Button rows use `FlowLayout`; minimum window 900x600 | Real clipping found at 100/125/150% |
+| D42 | Packaged exe is windowed onedir with a `--smoke-test` self-check; no installer/signing | Spec G5: exe first |
