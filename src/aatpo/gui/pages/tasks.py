@@ -13,6 +13,7 @@ from aatpo.domain.models import ROLE_TITLES_VI, TaskState as T, WorkOrderState a
 from aatpo.evidence import artifacts
 from aatpo.gui.pages.base import Page, clear_layout
 from aatpo.office.approvals import ApprovalError
+from aatpo.gui.widgets.flow_layout import FlowLayout
 
 STATE_VI = {
     "BACKLOG": "Chờ xếp lịch", "READY": "Sẵn sàng", "CLAIMED": "Đã nhận", "RUNNING": "Đang thực hiện",
@@ -31,7 +32,7 @@ class TasksPage(Page):
         super().__init__(services, window)
         self.empty = QLabel("Chưa có công việc nào. Hãy mô tả việc bạn cần ở mục “Văn phòng AI”.")
         self.root.addWidget(self.empty)
-        bar = QHBoxLayout()
+        bar = FlowLayout()
         self.btn = {}
         for key, text, fn in (("start", "Bắt đầu", self.start_selected), ("pause", "Tạm dừng", self.pause_selected),
                               ("resume", "Tiếp tục", self.resume_selected), ("detail", "Xem chi tiết", self.show_detail),
@@ -175,7 +176,8 @@ class TasksPage(Page):
         if key.startswith("run:"):
             self.running.discard(key[4:])
             if exc is not None:
-                QMessageBox.warning(self, "AATPO", f"Không thể thực hiện: {exc}")
+                QMessageBox.warning(self, "AATPO", f"Không thể thực hiện: {exc}\n\nChi tiết kỹ thuật đã được ghi vào:\n"
+                                    f"{self.services.paths.home / 'logs' / 'errors.log'}")
             elif result is not None:
                 self.status.setText(result.message if result.outcome in ("blocked", "paused_quota", "needs_review") else "")
             self.win.refresh_all()
@@ -250,7 +252,7 @@ class ApprovalsPage(Page):
         self.root.addWidget(self.list)
         self.detail = QTextBrowser()
         self.root.addWidget(self.detail, 1)
-        self.btn_row = QHBoxLayout()
+        self.btn_row = FlowLayout()
         self.root.addLayout(self.btn_row)
         self.items = []
 
@@ -314,7 +316,10 @@ class ApprovalsPage(Page):
 
     def decide(self, a, approve: bool, key: str | None, title: str | None) -> None:
         proj = self.services.registry.get(a.project_id)
-        if a.kind == "rerun":
+        if a.kind == "revert":
+            what = (f"Bạn đồng ý tạo MỘT phiên bản mới đảo ngược thay đổi này trong dự án “{proj.display_name}”? "
+                    "Lịch sử cũ được giữ nguyên." if approve else "Bạn KHÔNG muốn hoàn tác thay đổi này?")
+        elif a.kind == "rerun":
             what = (f"Bạn cho chạy lại công việc bị gián đoạn trong dự án “{proj.display_name}”? Thao tác có thể ghi trùng lên tệp."
                     if approve else "Bạn KHÔNG cho chạy lại công việc này (sẽ đánh dấu thất bại)?")
         else:

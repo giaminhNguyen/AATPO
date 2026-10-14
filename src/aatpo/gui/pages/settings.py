@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QCheckBox, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout,
+    QCheckBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
 
 from aatpo.agents.smoke import run_readonly_smoke
 from aatpo.cli.probe import STATUS_VI, probe_all
+from aatpo.db.backup import BackupError, backup_now, list_backups, schedule_restore
+from aatpo.office.audit import audit_git
+from aatpo.office.metrics import describe, provider_stats
 from aatpo.customer.intent_router import LLMIntentProposer, RuleIntentProposer
 from aatpo.customer.llm_ask import make_asker, ready_provider
 from aatpo.gui.pages.base import Page
+from aatpo.gui.widgets.flow_layout import FlowLayout
 
 NAMES = {"codex": "Codex", "claude": "Claude Code", "gemini": "Gemini", "fake": "Trợ lý giả lập"}
 CONSENT = ("Yêu cầu thử này sẽ gửi nội dung thư mục dự án “{project}” ({path}) tới dịch vụ AI của {provider}.\n\n"
@@ -23,7 +27,7 @@ class SettingsPage(Page):
         super().__init__(services, window)
         self.rows: dict[str, tuple[QLabel, QPushButton]] = {}
         self.running_run: str | None = None
-        top = QHBoxLayout()
+        top = FlowLayout()
         self.recheck = QPushButton("Kiểm tra lại")
         self.recheck.clicked.connect(self.probe)
         top.addWidget(self.recheck)
@@ -52,6 +56,21 @@ class SettingsPage(Page):
         self.answer.setReadOnly(True)
         self.answer.setPlaceholderText("Kết quả thử sẽ hiện ở đây.")
         self.root.addWidget(self.answer, 1)
+        rel = QGroupBox("Dữ liệu và độ tin cậy")
+        rl = QVBoxLayout(rel)
+        row = FlowLayout()
+        for text, fn in (("Sao lưu dữ liệu ngay", self.do_backup), ("Khôi phục từ bản sao lưu…", self.do_restore),
+                         ("Đối chiếu với kho Git", self.do_audit)):
+            b = QPushButton(text)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch(1)
+        rl.addLayout(row)
+        self.rel_text = QPlainTextEdit()
+        self.rel_text.setReadOnly(True)
+        self.rel_text.setMaximumHeight(110)
+        rl.addWidget(self.rel_text)
+        self.root.addWidget(rel)
         self.adv = QGroupBox("Chi tiết kỹ thuật")
         self.adv.setCheckable(True)
         self.adv.setChecked(False)
@@ -66,6 +85,9 @@ class SettingsPage(Page):
 
     # -- data --
     def refresh(self) -> None:
+        if not self.rel_text.toPlainText() or self.rel_text.toPlainText().startswith(("Chưa có", "Thống kê")):
+            s = describe(provider_stats(self.services.db))
+            self.rel_text.setPlainText(("Thống kê chạy (chỉ số đã đo, không có chi phí):\n" + s) if s != "Chưa có lần chạy nào được ghi nhận." else s)
         stats = self.services.provider_statuses()
         has_project = self.services.registry.selected() is not None
         for pid, (label, btn) in self.rows.items():
@@ -73,6 +95,40 @@ class SettingsPage(Page):
             label.setText(f"{STATUS_VI.get(status, status)}" + (f"  —  {version}" if version else ""))
             btn.setEnabled(status == "ready" and has_project and self.running_run is None)
             btn.setToolTip("" if has_project else "Hãy chọn dự án trước")
+
+    # -- data safety --
+    def do_backup(self) -> None:
+        from datetime import datetime, timezone
+        dest = self.services.paths.backups / f"office-manual-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}.db"
+        try:
+            backup_now(self.services.db, dest)
+            self.rel_text.setPlainText(f"Đã sao lưu: {dest}")
+        except Exception as e:
+            self.rel_text.setPlainText(f"Sao lưu thất bại: {e}")
+
+    def choose_backup(self) -> str | None:
+        path, _ = QFileDialog.getOpenFileName(self, "Chọn bản sao lưu", str(self.services.paths.backups), "Sao lưu (*.db)")
+        return path or None
+
+    def do_restore(self) -> None:
+        path = self.choose_backup()
+        if not path:
+            return
+        if QMessageBox.question(self, "Khôi phục dữ liệu",
+                                "Dữ liệu hiện tại sẽ được thay bằng bản sao lưu này khi bạn mở lại AATPO (bản hiện tại vẫn được giữ lại). "
+                                "Bạn đồng ý?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            from pathlib import Path
+            schedule_restore(self.services.paths.home / "config", Path(path))
+            self.rel_text.setPlainText("Đã đặt lịch khôi phục. Hãy đóng và mở lại AATPO để hoàn tất.")
+        except BackupError as e:
+            self.rel_text.setPlainText(str(e))
+
+    def do_audit(self) -> None:
+        found = audit_git(self.services)
+        self.rel_text.setPlainText("Đối chiếu xong: dữ liệu khớp với kho Git." if not found
+                                   else "Phát hiện chỗ không khớp:\n" + "\n".join(f"• [{d.project}] {d.detail_vi}" for d in found))
 
     def probe(self) -> None:
         self.recheck.setEnabled(False)

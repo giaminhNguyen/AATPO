@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 IntentAction = Literal[
     "create_project", "open_project", "new_work_order", "start_work", "pause_work",
-    "show_progress", "change_request", "approve_attempt", "prefer_lean", "unknown",
+    "show_progress", "change_request", "approve_attempt", "prefer_lean", "undo_request", "unknown",
 ]
 
 

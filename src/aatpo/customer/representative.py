@@ -118,6 +118,8 @@ class ChatService:
                                   "Khi có công việc đang chạy, tôi sẽ yêu cầu dừng an toàn và báo lại trạng thái.")
         if a == "show_progress":
             return self._progress(project)
+        if a == "undo_request":
+            return self._undo(project)
         if a == "prefer_lean":
             if wo and wo.state == W.SCOPE_PROPOSED:
                 return ChatReply(text="Phương án “Tiết kiệm” phù hợp với yêu cầu này. Hãy xem phạm vi và bấm chọn ở mục "
@@ -229,6 +231,34 @@ class ChatService:
                              actions=[UiAction(kind="start_run", label="Theo dõi công việc",
                                                payload={"work_order_id": wo.work_order_id})])
         return ChatReply(text=f"Công việc hiện ở trạng thái “{STATE_VI.get(wo.state, wo.state)}”, chưa thể bắt đầu.")
+
+    def _undo(self, project: Project) -> ChatReply:
+        """Turns 'undo' into a reviewed revert PROPOSAL for the newest AATPO-saved version. Nothing runs here."""
+        from pathlib import Path
+        from aatpo.office.approvals import ApprovalError
+        if self.manager is None:
+            return ChatReply(text="Chưa thể hoàn tác lúc này.")
+        with self.db.lock:
+            row = self.db.conn.execute(
+                "SELECT ce.sha, ce.task_id, t.work_order_id FROM git_commit_events ce JOIN git_repositories r USING(repo_id) "
+                "JOIN tasks t USING(task_id) WHERE r.project_id=? AND ce.status='committed' "
+                "ORDER BY ce.at DESC, ce.rowid DESC LIMIT 1", (project.project_id,)).fetchone()
+        if row is None:
+            return ChatReply(text="Chưa có phiên bản nào do AATPO lưu trong dự án này để hoàn tác.")
+        git, root = self.manager.git, Path(project.root_path)
+        try:
+            subject = next((s for sh, s, _ in git.log(root, 200) if sh == row["sha"]), "(không rõ)")
+            later = git.commits_after(root, row["sha"])
+            files = git.files_in_commit(root, row["sha"])
+            self.approvals.request_revert(project.project_id, row["work_order_id"], row["sha"], subject, later, files)
+        except ApprovalError as e:
+            return ChatReply(text=str(e), actions=[UiAction(kind="view_scope", label="Mở mục quyết định")])
+        except Exception:
+            return ChatReply(text="Không đọc được lịch sử phiên bản của dự án nên chưa thể đề xuất hoàn tác.")
+        return ChatReply(text=f"Tôi chưa hoàn tác ngay. Tôi đề xuất tạo một phiên bản mới đảo ngược thay đổi “{subject[:60]}”"
+                              + (f" (đã có {later} phiên bản lưu sau đó nên có thể ảnh hưởng chúng)" if later else "")
+                              + ". Lịch sử cũ được giữ nguyên. Hãy xem và quyết định ở mục “Cần bạn quyết định”.",
+                         actions=[UiAction(kind="view_scope", label="Xem đề xuất hoàn tác")])
 
     def _progress(self, project: Project) -> ChatReply:
         wos = self.store.list_work_orders(project.project_id)

@@ -17,6 +17,8 @@ from aatpo.evidence import artifacts
 from aatpo.office import cli_router, planner
 from aatpo.office.approvals import ApprovalService
 from aatpo.office.write_flow import WriteFlow
+from aatpo.telemetry.errorlog import log_exception
+from aatpo.telemetry.redaction import redact
 from aatpo.projects.git_service import GitService
 from aatpo.projects.registry import ProjectRegistry
 
@@ -46,7 +48,8 @@ def parse_verdict(text: str) -> tuple[str | None, str]:
 class OfficeManager:
     def __init__(self, store: Store, registry: ProjectRegistry, git: GitService, sessions: SessionManager,
                  approvals: ApprovalService, artifacts_root, cfg: OfficeConfig | None = None,
-                 write_mode: bool = False):
+                 write_mode: bool = False, error_log=None):
+        self.error_log = error_log
         self.store, self.registry, self.git, self.sessions = store, registry, git, sessions
         self.approvals, self.db, self.root = approvals, store.db, artifacts_root
         self.cfg = cfg or OfficeConfig()
@@ -174,6 +177,40 @@ class OfficeManager:
         return sum(t.state == T.DONE for t in ts), len(ts)
 
     async def run_work_order(self, wo_id: str) -> RunSummary:
+        """Public entry. Anything unexpected is journalled, logged with its traceback, and the work is stopped in a
+        recoverable state - never left half-claimed with a vague popup."""
+        try:
+            return await self._run_work_order(wo_id)
+        except (ScopeNotApproved, ApprovalRequired):
+            raise
+        except Exception as e:
+            return self._recover_from_internal_error(wo_id, e)
+
+    def _recover_from_internal_error(self, wo_id: str, exc: Exception) -> RunSummary:
+        log_exception(self.error_log, f"work order {wo_id}", exc)
+        wo = self.store.get_work_order(wo_id)
+        for t in self.store.list_work_order_tasks(wo_id):
+            t = self.store.get_task(t.task_id)
+            try:
+                if t.state == T.CLAIMED:
+                    self.store.transition_task(t.task_id, T.READY, t.version)
+                elif t.state == T.RUNNING:   # a process may or may not have finished: uncertain => needs the user's approval
+                    self.store.transition_task(t.task_id, T.UNKNOWN_AFTER_CRASH, t.version)
+                    self.approvals.request_rerun(t.task_id)
+            except Exception:
+                pass
+        with self.db.tx() as c:
+            c.execute("DELETE FROM resource_locks WHERE holder_task_id IN (SELECT task_id FROM tasks WHERE work_order_id=? "
+                      "AND state<>'UNKNOWN_AFTER_CRASH')", (wo_id,))
+            self.store.log_event(c, "internal_error", "work_order", wo_id, wo.project_id, error=type(exc).__name__,
+                                 message=redact(str(exc), 300))
+        wo = self.store.get_work_order(wo_id)
+        if wo.state in (W.EXECUTING, W.VERIFYING, W.PACKAGING):
+            self.store.transition_work_order(wo_id, W.BLOCKED, wo.version)
+        return RunSummary("blocked", f"Gặp lỗi nội bộ ({type(exc).__name__}: {redact(str(exc), 160)}). Công việc đã được dừng an toàn và "
+                                     "ghi nhật ký; không có gì bị chạy lại tự động.")
+
+    async def _run_work_order(self, wo_id: str) -> RunSummary:
         wo = self.store.get_work_order(wo_id)
         if wo.requires_scope_approval and not self.store.scope_approved(wo_id):
             raise ScopeNotApproved("Chưa được duyệt phạm vi nên chưa thể thực hiện")

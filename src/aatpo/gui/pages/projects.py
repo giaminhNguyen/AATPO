@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from aatpo.gui.pages.base import Page
 from aatpo.projects.registry import RegistryError
+from aatpo.gui.widgets.flow_layout import FlowLayout
 
 
 def parse_command(text: str) -> list[str]:
@@ -62,10 +63,10 @@ class ProjectsPage(Page):
 
     def __init__(self, services, window):
         super().__init__(services, window)
-        bar = QHBoxLayout()
+        bar = FlowLayout()
         for text, fn in (("Mở dự án có sẵn…", self.add_existing), ("Tạo dự án mới…", self.create_new),
                          ("Chọn làm dự án hiện tại", self.select_current), ("Liên kết lại thư mục…", self.relink),
-                         ("Lệnh kiểm thử…", self.set_test_command), ("Tên người lưu phiên bản…", self.set_identity),
+                         ("Lịch sử phiên bản…", self.show_history), ("Lệnh kiểm thử…", self.set_test_command), ("Tên người lưu phiên bản…", self.set_identity),
                          ("Lưu trữ", self.archive)):
             b = QPushButton(text)
             b.clicked.connect(fn)
@@ -177,6 +178,13 @@ class ProjectsPage(Page):
         except RegistryError as e:
             self._warn(str(e))
         self.win.refresh_all()
+
+    def show_history(self) -> None:
+        pid = self._selected_id()
+        if pid:
+            from aatpo.gui.pages.history import HistoryDialog
+            self.last_dialog = HistoryDialog(self, self.services, self.services.registry.get(pid), on_change=self.win.refresh_all)
+            self.last_dialog.exec()
 
     def ask_text(self, title: str, label: str, default: str = "") -> str | None:
         text, ok = QInputDialog.getText(self, title, label, QLineEdit.Normal, default)

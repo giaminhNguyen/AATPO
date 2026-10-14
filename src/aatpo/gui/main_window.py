@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import (
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+)
 
 from aatpo.gui.pages.home_chat import HomePage
 from aatpo.gui.bridges.background_jobs import BackgroundJobs
@@ -28,9 +31,10 @@ class MainWindow(QMainWindow):
     def __init__(self, services: Services, auto_probe: bool = True):
         super().__init__()
         self.services = services
-        self.jobs = BackgroundJobs()
+        self.jobs = BackgroundJobs(services.paths.home / "logs" / "errors.log")
         self.setWindowTitle("AATPO — Văn phòng AI")
         self.resize(1100, 700)
+        self.setMinimumSize(900, 600)
         self.setStyleSheet(STYLE)
 
         central = QWidget()
@@ -53,6 +57,10 @@ class MainWindow(QMainWindow):
             self.pages[key] = page
             self.keys.append(key)
             self.stack.addWidget(page)
+        for i, key in enumerate(self.keys):      # keyboard: Ctrl+1..6 jump between the areas
+            sc = QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self)
+            sc.activated.connect(lambda k=key: self.go(k))
+        self.nav.setAccessibleName("Các khu vực của AATPO")
         self.nav.currentRowChanged.connect(self._on_nav)
         self.nav.setCurrentRow(0)
         self.refresh_all()
@@ -66,6 +74,16 @@ class MainWindow(QMainWindow):
     def _on_nav(self, row: int) -> None:
         self.stack.setCurrentIndex(row)
         self.pages[self.keys[row]].refresh()
+        self.name_controls()
+
+    def name_controls(self) -> None:
+        """Screen-reader names for every button / text box that lacks one (labels double as names)."""
+        for b in self.findChildren(QPushButton):
+            if not b.accessibleName():
+                b.setAccessibleName(b.text())
+        for e in self.findChildren(QLineEdit):
+            if not e.accessibleName():
+                e.setAccessibleName(e.placeholderText() or "Ô nhập")
 
     def go(self, key: str) -> None:
         self.nav.setCurrentRow(self.keys.index(key))

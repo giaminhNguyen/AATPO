@@ -68,6 +68,10 @@ async def run_process(argv: list[str], *, cwd: str | None, stdin_text: str | Non
     else:
         proc = await asyncio.create_subprocess_exec(exe, *args, **kw)
 
+    if IS_WIN:
+        from aatpo.cli import windows_job
+        windows_job.assign(proc.pid)   # best effort: children die with AATPO even on a crash
+
     out, err, truncated = bytearray(), bytearray(), False
 
     async def drain(stream, buf: bytearray, stream_lines: bool) -> None:

@@ -26,6 +26,13 @@ elif mode == "tree":  # spawn a grandchild, publish its pid, then wait
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     open(sys.argv[2], "w").write(str(child.pid))
     time.sleep(60)
+elif mode == "pids":  # publish own pid + a grandchild's pid, then wait (orphan-on-crash drill)
+    import os
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    open(sys.argv[2], "w").write(f"{os.getpid()} {child.pid}")
+    time.sleep(120)
+elif mode == "probe_old":   # an older CLI: --version works, --help lacks the flags AATPO needs
+    print("0.0.1" if "--version" in sys.argv else "usage: tool [options]")
 elif mode == "big":
     sys.stdout.write("x" * 3_000_000)
 elif mode == "claude_ok":

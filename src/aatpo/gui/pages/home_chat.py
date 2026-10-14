@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from aatpo.domain.contracts import ChatReply, UiAction
 from aatpo.gui.pages.base import Page, clear_layout
+from aatpo.gui.widgets.flow_layout import FlowLayout
 
 WELCOME = "Xin chào! Bạn muốn AATPO giúp gì hôm nay?"
 
@@ -21,7 +22,7 @@ class HomePage(Page):
         self.active.setWordWrap(True)
         self.root.addWidget(self.active)
 
-        quick = QHBoxLayout()
+        quick = FlowLayout()
         for text, fn in (("Tạo dự án", lambda: self._go_projects(True)),
                          ("Mở dự án", lambda: self._go_projects(False)),
                          ("Giao việc mới", lambda: self.send_text("Tôi cần làm ")),

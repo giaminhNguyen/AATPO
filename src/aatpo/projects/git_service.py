@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Only these subcommands may ever be executed by this service.
 _ALLOWED = {"rev-parse", "status", "init", "add", "commit", "config", "symbolic-ref", "diff", "log", "switch",
-            "merge", "merge-base", "restore"}
+            "merge", "merge-base", "restore", "revert"}
 _BRANCH = re.compile(r"^task/[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$")
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
@@ -132,9 +132,17 @@ class GitService:
         r = self._run(path, "symbolic-ref", "--short", "-q", "HEAD")
         return r.stdout.strip() or None
 
+    def toplevel(self, path: Path) -> Path:
+        r = self._run(path, "rev-parse", "--show-toplevel", check=True)
+        return Path(r.stdout.strip())
+
+    def project_prefix(self, path: Path) -> str:
+        """Folder of `path` inside its repository ('' when it IS the repo root, else e.g. 'sub/')."""
+        return self._run(path, "rev-parse", "--show-prefix", check=True).stdout.strip()
+
     def changed_paths(self, path: Path) -> list[str]:
-        """Paths changed in the working tree (porcelain v1, NUL-separated so any filename is safe)."""
-        r = self._run(path, "status", "--porcelain=v1", "-z", "--untracked-files=all", check=True)
+        """Repo-root-relative paths changed in the working tree (porcelain v1, NUL-separated so any filename is safe)."""
+        r = self._run(self.toplevel(path), "status", "--porcelain=v1", "-z", "--untracked-files=all", check=True)
         out, parts = [], r.stdout.split("\0")
         i = 0
         while i < len(parts):
@@ -152,12 +160,12 @@ class GitService:
         """Stage ONLY the given paths (never -A). Paths are passed after `--` so they cannot become options."""
         if not paths:
             raise GitError("không có tệp nào để lưu")
-        self._run(path, "add", "--", *paths, check=True)
+        self._run(self.toplevel(path), "add", "--", *paths, check=True)
 
     def unstage_paths(self, path: Path, paths: list[str]) -> None:
         """Index-only undo of `add` (`restore --staged`); the working tree is never touched."""
         if paths:
-            self._run(path, "restore", "--staged", "--", *paths, check=True)
+            self._run(self.toplevel(path), "restore", "--staged", "--", *paths, check=True)
 
     def commit_exists(self, path: Path, sha: str) -> bool:
         return bool(_SHA.match(sha)) and self._run(path, "rev-parse", "--verify", "-q", f"{sha}^{{commit}}").exit_code == 0
@@ -220,3 +228,43 @@ class GitService:
         if r.exit_code != 0:
             raise NotFastForward((r.stderr or r.stdout).strip()[:300])
         return self.head_sha(path)
+
+    # ---- G5: history + reviewed undo ----------------------------------------------------------------------------
+    def log(self, path: Path, n: int = 50) -> list[tuple[str, str, str]]:
+        """Newest-first (sha, subject, ISO date) of the current branch; separators are control chars, never newlines."""
+        r = self._run(path, "log", f"-n{max(1, min(int(n), 500))}", "--format=%H%x1f%s%x1f%cI")
+        if r.exit_code != 0:
+            return []
+        return [tuple(line.split("\x1f", 2)) for line in r.stdout.splitlines() if line.count("\x1f") == 2]
+
+    def commits_after(self, path: Path, sha: str) -> int:
+        if not _SHA.match(sha):
+            raise GitError("mã phiên bản không hợp lệ")
+        r = self._run(path, "log", "--format=%H", f"{sha}..HEAD")
+        return len(r.stdout.split()) if r.exit_code == 0 else 0
+
+    def files_in_commit(self, path: Path, sha: str) -> list[str]:
+        if not _SHA.match(sha):
+            raise GitError("mã phiên bản không hợp lệ")
+        parent = self.parent_sha(path, sha)
+        if parent:
+            r = self._run(path, "diff", "--name-only", "-z", parent, sha, check=True)
+        else:
+            r = self._run(path, "diff", "--name-only", "-z", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", sha, check=True)
+        return [p for p in r.stdout.split("\0") if p]
+
+    def revert_commit(self, path: Path, sha: str) -> str:
+        """Undo = a NEW revert commit (history preserved). Clean tree + identity required; on conflict the revert is
+        aborted (`revert --abort` restores the pre-revert state) and nothing is left half-applied."""
+        if not _SHA.match(sha):
+            raise GitError("mã phiên bản không hợp lệ")
+        if not self.identity(path):
+            raise MissingIdentity("Chưa có tên/email để ghi lịch sử phiên bản")
+        if self.detect(path).dirty:
+            raise DirtyRepo("Thư mục dự án có thay đổi chưa lưu nên chưa thể hoàn tác")
+        r = self._run(path, "revert", "--no-edit", sha)
+        if r.exit_code != 0:
+            self._run(path, "revert", "--abort")
+            raise GitError("Không thể hoàn tác tự động (xung đột với thay đổi về sau). Không có gì bị thay đổi.")
+        return self.head_sha(path)
+

@@ -42,6 +42,9 @@ class WriteFlow:
         if not self.git.available:
             return Block("Chưa cài Git nên chưa thể ghi thay đổi một cách an toàn.", "no_git")
         info = self.git.detect(root)
+        if info.is_repo and (Path(info.root) / ".git" / "index.lock").exists():
+            return Block("Có một thao tác Git khác đang chạy hoặc bị treo (tệp .git/index.lock). Hãy đóng chương trình đó "
+                         "rồi bấm Tiếp tục; AATPO không tự xóa tệp khóa.", "git_locked")
         if not info.is_repo:
             return Block("Dự án chưa có lịch sử phiên bản nên AATPO chưa dám sửa tệp. Hãy bật “lưu lịch sử phiên bản” cho dự án.", "no_repo")
         if not info.has_commits:
@@ -72,6 +75,10 @@ class WriteFlow:
             return Collected(False, f"Không đọc được trạng thái Git: {e}")
         if not changed:
             return Collected(False, "Không có tệp nào được thay đổi, nên chưa thể coi là đã thực hiện công việc.")
+        prefix = self.git.project_prefix(root)
+        outside = [p for p in changed if prefix and not p.startswith(prefix)]
+        if outside:
+            return Collected(False, "Trợ lý đã thay đổi tệp NGOÀI thư mục dự án: " + ", ".join(outside[:5]) + ". Các thay đổi này KHÔNG được lưu.")
         bad = git_evidence.forbidden_paths(changed)
         if bad:
             return Collected(False, "Trợ lý đã đụng tới tệp không được phép (khóa/bí mật/.git): " + ", ".join(bad[:5])
@@ -173,3 +180,23 @@ class WriteFlow:
             c.execute("INSERT INTO git_commit_events VALUES(?,?,?,?,?,?,?,?,?,?)",
                       (new_id("GCE"), rows[-1]["repo_id"], target, sha, None, None, wo_id, "merge --ff-only", "integrated", utcnow()))
         return "integrated", f"Đã tích hợp vào nhánh “{target}” (phiên bản {sha[:8]})."
+
+    # ---- reviewed undo ----------------------------------------------------------------------------------------------
+    def revert(self, project_id: str, sha: str) -> str:
+        """Executed ONLY from ApprovalService.decide after the user approved this exact commit. New revert commit."""
+        project = self.m.registry.get(project_id)
+        root = Path(project.root_path)
+        with self.db.lock:
+            row = self.db.conn.execute(
+                "SELECT ce.*, r.project_id FROM git_commit_events ce JOIN git_repositories r USING(repo_id) "
+                "WHERE ce.sha=? AND r.project_id=? AND ce.status='committed'", (sha, project_id)).fetchone()
+        if row is None:
+            raise GitError("Chỉ hoàn tác được các phiên bản do AATPO đã lưu cho dự án này.")
+        new = self.git.revert_commit(root, sha)
+        branch = self.git.current_branch(root)
+        with self.db.tx() as c:
+            c.execute("INSERT INTO git_commit_events VALUES(?,?,?,?,?,?,?,?,?,?)",
+                      (new_id("GCE"), row["repo_id"], branch, new, sha, row["task_id"], f"revert of {sha}",
+                       "git config (người dùng)", "reverted", utcnow()))
+        return new
+

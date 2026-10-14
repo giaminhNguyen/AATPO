@@ -7,6 +7,7 @@ from pathlib import Path
 from aatpo.agents.session_manager import SessionManager
 from aatpo.cli.probe import STATUS_VI, default_adapters
 from aatpo.customer.representative import ChatService
+from aatpo.db.backup import apply_pending_restore, backup_if_due
 from aatpo.db.connection import Database
 from aatpo.db.repositories import Store
 from aatpo.config import load_config
@@ -29,11 +30,13 @@ class Services:
     approvals: ApprovalService
     chat: ChatService
     manager: OfficeManager
+    restore_note: str | None = None
 
     @classmethod
     def create(cls, paths: AppPaths, git_exe: str | None = None, adapters: dict | None = None,
                write_mode: bool = False) -> "Services":
         paths.ensure()
+        restore_note = apply_pending_restore(paths.home)   # a restore chosen last session is applied before the DB opens
         db = Database(paths.db_path, backup_dir=paths.backups)
         store = Store(db)
         store.reconcile_after_restart()  # RUNNING work from a previous crash -> UNKNOWN, never replayed
@@ -43,11 +46,19 @@ class Services:
         approvals = ApprovalService(store)
         sessions = SessionManager(store, adapters)
         manager = OfficeManager(store, registry, git, sessions, approvals, paths.home / "artifacts",
-                                load_config(paths.home / "config" / "office.toml"), write_mode=write_mode)
+                                load_config(paths.home / "config" / "office.toml"), write_mode=write_mode,
+                                error_log=paths.home / "logs" / "errors.log")
         chat = ChatService(store, registry, approvals)
         chat.manager = manager
         manager.reconcile_after_restart()   # uncertain work gets an approval request, never an automatic replay
-        return cls(paths, db, store, git, registry, adapters, sessions, approvals, chat, manager)
+        approvals.revert_executor = manager.flow.revert
+        try:
+            backup_if_due(db, paths.backups)
+        except Exception:   # a failed backup must never stop the app from opening
+            pass
+        svc = cls(paths, db, store, git, registry, adapters, sessions, approvals, chat, manager)
+        svc.restore_note = restore_note
+        return svc
 
     def provider_statuses(self) -> dict[str, tuple[str, str | None]]:
         """provider_id -> (status, version) as last probed (local checks only)."""

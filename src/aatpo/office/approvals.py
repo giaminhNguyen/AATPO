@@ -80,6 +80,28 @@ class ApprovalService:
             self.store.log_event(c, "approval.requested", "approval", aid, t["project_id"], approval_kind="rerun", task=task_id)
         return self.get(aid)
 
+    revert_executor = None   # set by Services: callable(project_id, sha) -> new sha
+
+    def request_revert(self, project_id: str, work_order_id: str, sha: str, subject: str, later_commits: int,
+                       files: list[str]) -> Approval:
+        """'Undo' is never executed directly: it becomes this approval, naming the exact commit and its side effects."""
+        warn = (f" Đã có {later_commits} phiên bản được lưu sau đó; việc hoàn tác có thể đụng tới các thay đổi này."
+                if later_commits else "")
+        with self.db.tx() as c:
+            if c.execute("SELECT 1 FROM approvals WHERE kind='revert' AND status='pending' AND options LIKE ?",
+                         (f'%"{sha}"%',)).fetchone():
+                raise ApprovalError("Đã có đề xuất hoàn tác cho phiên bản này đang chờ bạn quyết định")
+            aid = new_id("APR")
+            c.execute("INSERT INTO approvals(approval_id,kind,project_id,work_order_id,scope_version,action_text,"
+                      "consequences,options,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                      (aid, "revert", project_id, work_order_id, None, f"Hoàn tác phiên bản: {subject[:80]} [{sha[:10]}]",
+                       "AATPO sẽ tạo MỘT phiên bản mới đảo ngược thay đổi này (lịch sử cũ được giữ nguyên, không xóa gì)." + warn
+                       + " Tệp bị ảnh hưởng: " + (", ".join(files[:8]) or "(không rõ)") + ".",
+                       json.dumps([{"key": "revert", "title": "Tạo bản hoàn tác", "effort": "", "sha": sha}], ensure_ascii=False),
+                       utcnow()))
+            self.store.log_event(c, "approval.requested", "approval", aid, project_id, approval_kind="revert", sha=sha)
+        return self.get(aid)
+
     def get(self, approval_id: str) -> Approval:
         with self.db.lock:
             r = self.db.conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
@@ -97,6 +119,9 @@ class ApprovalService:
     def decide(self, approval_id: str, approve: bool, chosen_option: str | None = None,
                operator: str | None = None) -> Approval:
         """Called only by GUI button handlers. Re-validates everything deterministically."""
+        pre = self.get(approval_id)
+        if pre.kind == "revert":
+            return self._decide_revert(pre, approve, chosen_option, operator)
         with self.db.tx() as c:
             r = c.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
             if r is None:
@@ -138,6 +163,7 @@ class ApprovalService:
         if t["state"] != "UNKNOWN_AFTER_CRASH":
             raise ApprovalError("Công việc này đã được xử lý")
         self.store.transition_task_in_tx(c, tid, TaskState.READY if approve else TaskState.FAILED, t["version"])
+        c.execute("DELETE FROM resource_locks WHERE holder_task_id=?", (tid,))   # the uncertain run's lock ends with the decision
         now, op = utcnow(), operator or getpass.getuser()
         c.execute("UPDATE approvals SET status=?, chosen_option=?, decided_at=?, operator=? WHERE approval_id=?",
                   ("approved" if approve else "rejected", chosen_option if approve else None, now, op, r["approval_id"]))
@@ -147,3 +173,23 @@ class ApprovalService:
 
     def get_in_tx(self, c, approval_id: str) -> Approval:
         return _row(c.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone())
+
+    def _decide_revert(self, a: Approval, approve: bool, chosen_option, operator) -> Approval:
+        if a.status != "pending":
+            raise ApprovalError("Yêu cầu này đã được xử lý hoặc không còn hiệu lực")
+        new_sha = None
+        if approve:
+            if chosen_option != "revert" or self.revert_executor is None:
+                raise ApprovalError("Hãy chọn “Tạo bản hoàn tác” hoặc “Không đồng ý”")
+            try:   # git runs OUTSIDE our transaction (it journals itself); failure leaves the approval pending
+                new_sha = self.revert_executor(a.project_id, a.options[0]["sha"])
+            except Exception as e:
+                raise ApprovalError(str(e)) from e
+        op = operator or getpass.getuser()
+        with self.db.tx() as c:
+            c.execute("UPDATE approvals SET status=?, chosen_option=?, decided_at=?, operator=? WHERE approval_id=?",
+                      ("approved" if approve else "rejected", chosen_option if approve else None, utcnow(), op, a.approval_id))
+            self.store.log_event(c, "approval.decided", "approval", a.approval_id, a.project_id, approve=approve,
+                                 approval_kind="revert", new_sha=new_sha, operator=op)
+        return self.get(a.approval_id)
+

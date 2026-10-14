@@ -12,8 +12,9 @@ from PySide6.QtCore import QObject, Signal
 class BackgroundJobs(QObject):
     finished = Signal(str, object, object)  # key, result, exception
 
-    def __init__(self) -> None:
+    def __init__(self, error_log=None) -> None:
         super().__init__()
+        self.error_log = error_log
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self.loop.run_forever, name="aatpo-jobs", daemon=True)
         self._thread.start()
@@ -26,6 +27,9 @@ class BackgroundJobs(QObject):
 
         def done(f) -> None:
             exc = f.exception()
+            if exc is not None:
+                from aatpo.telemetry.errorlog import log_exception
+                log_exception(self.error_log, f"background job {key.split(':')[0]}", exc)
             self.finished.emit(key, None if exc else f.result(), exc)
 
         fut.add_done_callback(done)

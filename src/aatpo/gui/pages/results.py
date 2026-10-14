@@ -13,6 +13,7 @@ from aatpo.customer.representative import STATE_VI
 from aatpo.domain.models import WorkOrderState as W
 from aatpo.evidence import artifacts
 from aatpo.gui.pages.base import Page
+from aatpo.gui.widgets.flow_layout import FlowLayout
 
 SHOWN = (W.DELIVERED, W.ACCEPTED, W.PACKAGING)
 
@@ -32,7 +33,7 @@ class ResultsPage(Page):
         self.report = QTextBrowser()
         self.report.setOpenLinks(False)
         self.root.addWidget(self.report, 1)
-        bar = QHBoxLayout()
+        bar = FlowLayout()
         self.btn = {}
         for key, text, fn in (("folder", "Mở thư mục dự án", self.open_folder), ("diff", "Xem thay đổi", self.show_diff),
                               ("save", "Lưu báo cáo…", self.save_report), ("copy", "Sao chép báo cáo", self.copy_report),
