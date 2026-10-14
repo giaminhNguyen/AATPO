@@ -1,0 +1,25 @@
+[office]
+language = "vi"
+concurrency = 1
+max_replans_per_work_order = 3
+max_handoffs_per_task = 6
+max_rework_cycles_per_task = 2
+
+[limits]
+max_runs_per_task = 4
+run_timeout_seconds = 900
+max_total_runs_per_work_order = 40
+
+[routing]
+strategy = "cheapest_capable_available"
+# Owner preference: Claude first (spec default was codex, gemini, claude)
+provider_preference = ["claude", "codex", "gemini"]
+
+[permissions]
+allow_production_deploy = false
+allow_delete_outside_workspace = false
+allow_unreviewed_external_spend = false
+allow_git_auto_local_commit = true
+allow_git_auto_local_fast_forward_merge = true
+allow_git_auto_push = false
+allow_git_history_rewrite = false

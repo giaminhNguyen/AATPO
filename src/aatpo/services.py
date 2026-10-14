@@ -9,7 +9,9 @@ from aatpo.cli.probe import STATUS_VI, default_adapters
 from aatpo.customer.representative import ChatService
 from aatpo.db.connection import Database
 from aatpo.db.repositories import Store
+from aatpo.config import load_config
 from aatpo.office.approvals import ApprovalService
+from aatpo.office.manager import OfficeManager
 from aatpo.projects.git_service import GitService
 from aatpo.projects.registry import ProjectRegistry
 from aatpo.settings import AppPaths
@@ -26,6 +28,7 @@ class Services:
     sessions: SessionManager
     approvals: ApprovalService
     chat: ChatService
+    manager: OfficeManager
 
     @classmethod
     def create(cls, paths: AppPaths, git_exe: str | None = None, adapters: dict | None = None) -> "Services":
@@ -37,8 +40,13 @@ class Services:
         adapters = default_adapters() if adapters is None else adapters
         registry = ProjectRegistry(store, git)
         approvals = ApprovalService(store)
-        return cls(paths, db, store, git, registry, adapters, SessionManager(store, adapters), approvals,
-                   ChatService(store, registry, approvals))
+        sessions = SessionManager(store, adapters)
+        manager = OfficeManager(store, registry, git, sessions, approvals, paths.home / "artifacts",
+                                load_config(paths.home / "config" / "office.toml"))
+        chat = ChatService(store, registry, approvals)
+        chat.manager = manager
+        manager.reconcile_after_restart()   # uncertain work gets an approval request, never an automatic replay
+        return cls(paths, db, store, git, registry, adapters, sessions, approvals, chat, manager)
 
     def provider_statuses(self) -> dict[str, tuple[str, str | None]]:
         """provider_id -> (status, version) as last probed (local checks only)."""

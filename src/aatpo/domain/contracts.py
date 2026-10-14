@@ -22,7 +22,7 @@ class Intent(BaseModel):
 
 class UiAction(BaseModel):
     kind: Literal["quick_reply", "pick_folder_create", "pick_folder_open", "switch_project",
-                  "pick_project", "view_scope", "view_progress"]
+                  "pick_project", "view_scope", "view_progress", "start_run", "pause_run"]
     label: str
     payload: dict = {}
 

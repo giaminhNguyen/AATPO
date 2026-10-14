@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 
 from aatpo.db.repositories import Store
-from aatpo.domain.models import WorkOrderState, new_id, utcnow
+from aatpo.domain.models import TaskState, WorkOrderState, new_id, utcnow
 
 
 class ApprovalError(ValueError):
@@ -59,6 +59,27 @@ class ApprovalService:
             self.store.log_event(c, "approval.requested", "approval", aid, wo["project_id"], version=version)
         return self.get(aid)
 
+    def request_rerun(self, task_id: str) -> Approval | None:
+        """A task whose process outcome is unknown after a crash is NEVER replayed without this approval."""
+        with self.db.tx() as c:
+            t = c.execute("SELECT t.*, w.project_id FROM tasks t JOIN work_orders w USING(work_order_id) "
+                          "WHERE task_id=?", (task_id,)).fetchone()
+            if t["state"] != "UNKNOWN_AFTER_CRASH":
+                return None
+            if c.execute("SELECT 1 FROM approvals WHERE kind='rerun' AND status='pending' AND action_text LIKE ?",
+                         (f"%[{task_id}]",)).fetchone():
+                return None
+            aid = new_id("APR")
+            c.execute("INSERT INTO approvals(approval_id,kind,project_id,work_order_id,scope_version,action_text,"
+                      "consequences,options,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                      (aid, "rerun", t["project_id"], t["work_order_id"], None,
+                       f"Chạy lại công việc bị gián đoạn: {t['title']} [{task_id}]",
+                       "Ứng dụng bị đóng đột ngột khi công việc này đang chạy nên chưa rõ nó đã sửa được gì. "
+                       "Hãy kiểm tra thư mục dự án trước. Nếu đồng ý, công việc sẽ chạy lại từ đầu và có thể ghi trùng.",
+                       json.dumps([{"key": "rerun", "title": "Cho chạy lại", "effort": ""}], ensure_ascii=False), utcnow()))
+            self.store.log_event(c, "approval.requested", "approval", aid, t["project_id"], approval_kind="rerun", task=task_id)
+        return self.get(aid)
+
     def get(self, approval_id: str) -> Approval:
         with self.db.lock:
             r = self.db.conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
@@ -82,6 +103,8 @@ class ApprovalService:
                 raise KeyError(approval_id)
             if r["status"] != "pending":
                 raise ApprovalError("Yêu cầu này đã được xử lý hoặc không còn hiệu lực")
+            if r["kind"] == "rerun":
+                return self._decide_rerun(c, r, approve, chosen_option, operator)
             latest = c.execute("SELECT MAX(version) FROM scopes WHERE work_order_id=?",
                                (r["work_order_id"],)).fetchone()[0]
             if r["kind"] == "scope" and latest != r["scope_version"]:
@@ -106,3 +129,21 @@ class ApprovalService:
                                  approve=approve, option=chosen_option, scope_version=r["scope_version"],
                                  work_order_id=r["work_order_id"], operator=op)
         return self.get(approval_id)
+
+    def _decide_rerun(self, c, r, approve: bool, chosen_option, operator) -> Approval:
+        if approve and chosen_option != "rerun":
+            raise ApprovalError("Hãy chọn “Cho chạy lại” hoặc “Không đồng ý”")
+        tid = r["action_text"].rsplit("[", 1)[1].rstrip("]")
+        t = c.execute("SELECT version,state FROM tasks WHERE task_id=?", (tid,)).fetchone()
+        if t["state"] != "UNKNOWN_AFTER_CRASH":
+            raise ApprovalError("Công việc này đã được xử lý")
+        self.store.transition_task_in_tx(c, tid, TaskState.READY if approve else TaskState.FAILED, t["version"])
+        now, op = utcnow(), operator or getpass.getuser()
+        c.execute("UPDATE approvals SET status=?, chosen_option=?, decided_at=?, operator=? WHERE approval_id=?",
+                  ("approved" if approve else "rejected", chosen_option if approve else None, now, op, r["approval_id"]))
+        self.store.log_event(c, "approval.decided", "approval", r["approval_id"], r["project_id"], approve=approve,
+                             option=chosen_option, task=tid, operator=op, approval_kind="rerun")
+        return self.get_in_tx(c, r["approval_id"])
+
+    def get_in_tx(self, c, approval_id: str) -> Approval:
+        return _row(c.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone())

@@ -32,6 +32,7 @@ class ChatService:
         self.store, self.registry, self.approvals = store, registry, approvals
         self.db = store.db
         self.proposer = proposer or RuleIntentProposer()
+        self.manager = None   # set by Services; keeps chat free of a hard import cycle
 
     # ---- history (scoped per project) ------------------------------------------------------
     def save(self, project_id: str, role: str, text: str, work_order_id: str | None = None, **meta) -> None:
@@ -217,8 +218,13 @@ class ChatService:
         if wo.requires_scope_approval and not self.store.scope_approved(wo.work_order_id):
             return ChatReply(text="Tôi chưa thể bắt đầu vì phạm vi chưa được bạn duyệt. Hãy chọn phương án ở mục "
                                   "“Cần bạn quyết định”.", actions=[UiAction(kind="view_scope", label="Xem phạm vi")])
-        return ChatReply(text="Phạm vi đã được duyệt. Việc lập kế hoạch và thực hiện sẽ có ở bước phát triển tiếp theo "
-                              "(G3); hiện tôi chưa tự chạy công việc.")
+        if wo.state in (W.SCOPE_CONFIRMED, W.PLANNED, W.PAUSED_QUOTA, W.BLOCKED, W.PAUSED_APPROVAL, W.EXECUTING):
+            if wo.state == W.SCOPE_CONFIRMED and self.manager is not None:
+                self.manager.create_plan(wo.work_order_id)
+            return ChatReply(text="Phạm vi đã được duyệt, tôi bắt đầu thực hiện. Bạn có thể theo dõi ở mục “Công việc”.",
+                             actions=[UiAction(kind="start_run", label="Theo dõi công việc",
+                                               payload={"work_order_id": wo.work_order_id})])
+        return ChatReply(text=f"Công việc hiện ở trạng thái “{STATE_VI.get(wo.state, wo.state)}”, chưa thể bắt đầu.")
 
     def _progress(self, project: Project) -> ChatReply:
         wos = self.store.list_work_orders(project.project_id)

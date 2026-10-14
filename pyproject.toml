@@ -20,6 +20,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "aatpo.db" = ["migrations/*.sql"]
+"aatpo" = ["roles/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

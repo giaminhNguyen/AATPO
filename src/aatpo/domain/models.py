@@ -147,6 +147,13 @@ class Task(_Row):
     version: int
     created_at: str
     updated_at: str
+    plan_version: int = 1
+    plan_key: str | None = None
+    role_id: str | None = None
+    acceptance: str | None = None
+    writes: bool = False
+    rework_count: int = 0
+    blocked_reason: str | None = None
 
 
 class Assignment(_Row):

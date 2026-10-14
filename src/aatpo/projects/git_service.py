@@ -2,13 +2,15 @@
 no remotes, no destructive commands. G0 scope: detect, init, baseline commit."""
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 # Only these subcommands may ever be executed by this service.
-_ALLOWED = {"rev-parse", "status", "init", "add", "commit", "config", "symbolic-ref", "diff", "log"}
+_ALLOWED = {"rev-parse", "status", "init", "add", "commit", "config", "symbolic-ref", "diff", "log", "switch"}
+_BRANCH = re.compile(r"^task/[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
 
 
 class GitError(RuntimeError):
@@ -84,3 +86,31 @@ class GitService:
         if baseline and self.identity(path):
             self._run(path, "commit", "--allow-empty", "-m", "chore: AATPO baseline snapshot", check=True)
         return self.detect(path)
+
+    # ---- task branches (G3) -----------------------------------------------------------------
+    def branch_exists(self, path: Path, name: str) -> bool:
+        return self._run(path, "rev-parse", "--verify", "-q", f"refs/heads/{name}").exit_code == 0
+
+    def head_sha(self, path: Path) -> str | None:
+        r = self._run(path, "rev-parse", "--verify", "-q", "HEAD")
+        return r.stdout.strip() if r.exit_code == 0 else None
+
+    def create_task_branch(self, path: Path, name: str) -> str:
+        """`git switch -c task/...` from the CURRENT head of a CLEAN repo; returns the base SHA.
+        Refuses dirty trees (nothing is stashed/reset/forced) and names outside the task/ namespace."""
+        if not _BRANCH.match(name):
+            raise GitError(f"tên nhánh không hợp lệ: {name}")
+        info = self.detect(path)
+        if not info.is_repo or not info.has_commits:
+            raise GitError("kho chưa có commit nào")
+        if info.dirty:
+            raise DirtyRepo("Thư mục dự án có thay đổi chưa được lưu")
+        if self.branch_exists(path, name):
+            raise GitError(f"nhánh {name} đã tồn tại")
+        base = self.head_sha(path)
+        self._run(path, "switch", "-c", name, check=True)
+        return base
+
+
+class DirtyRepo(GitError):
+    pass

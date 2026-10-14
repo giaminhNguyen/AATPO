@@ -24,6 +24,12 @@ class EvidenceRequired(ValueError):
     """Task.DONE needs verified evidence, never just a process success or an AI claim."""
 
 
+def _task(row) -> Task:
+    d = dict(row)
+    d["writes"] = bool(d["writes"])
+    return Task(**d)
+
+
 def _wo(row) -> WorkOrder:
     d = dict(row)
     d["requires_scope_approval"] = bool(d["requires_scope_approval"])
@@ -115,50 +121,73 @@ class Store:
                 (work_order_id,)).fetchone()
         return r is not None
 
-    def create_task(self, work_order_id: str, title: str) -> Task:
+    def create_task(self, work_order_id: str, title: str, *, plan_version: int = 1, plan_key: str | None = None,
+                    role_id: str | None = None, acceptance: str | None = None, writes: bool = False,
+                    depends_on: tuple[str, ...] = ()) -> Task:
         tid, now = new_id("TASK"), utcnow()
         with self.db.tx() as c:
             pid = c.execute("SELECT project_id FROM work_orders WHERE work_order_id=?",
                             (work_order_id,)).fetchone()["project_id"]
-            c.execute("INSERT INTO tasks VALUES(?,?,?,?,1,?,?)",
-                      (tid, work_order_id, title, TaskState.BACKLOG, now, now))
+            c.execute("INSERT INTO tasks(task_id,work_order_id,title,state,version,created_at,updated_at,plan_version,"
+                      "plan_key,role_id,acceptance,writes) VALUES(?,?,?,?,1,?,?,?,?,?,?,?)",
+                      (tid, work_order_id, title, TaskState.BACKLOG, now, now, plan_version, plan_key, role_id,
+                       acceptance, int(writes)))
+            for d in depends_on:
+                c.execute("INSERT INTO task_dependencies VALUES(?,?)", (tid, d))
             self.log_event(c, "task.created", "task", tid, pid, title=title)
         return self.get_task(tid)
+
+    def dependencies(self, task_id: str) -> list[Task]:
+        with self.db.lock:
+            rows = self.db.conn.execute("SELECT t.* FROM tasks t JOIN task_dependencies d ON d.depends_on=t.task_id "
+                                        "WHERE d.task_id=?", (task_id,)).fetchall()
+        return [_task(r) for r in rows]
+
+    def list_work_order_tasks(self, work_order_id: str, plan_version: int | None = None) -> list[Task]:
+        q, a = "SELECT * FROM tasks WHERE work_order_id=?", [work_order_id]
+        if plan_version is not None:
+            q, a = q + " AND plan_version=?", a + [plan_version]
+        with self.db.lock:
+            return [_task(r) for r in self.db.conn.execute(q + " ORDER BY created_at, rowid", a)]
 
     def get_task(self, tid: str) -> Task:
         with self.db.lock:
             row = self.db.conn.execute("SELECT * FROM tasks WHERE task_id=?", (tid,)).fetchone()
         if row is None:
             raise KeyError(tid)
-        return Task(**row)
+        return _task(row)
 
     def list_tasks(self, project_id: str) -> list[Task]:
         with self.db.lock:
             rows = self.db.conn.execute(
                 "SELECT t.* FROM tasks t JOIN work_orders w USING(work_order_id) "
-                "WHERE w.project_id=? ORDER BY t.created_at", (project_id,))
-            return [Task(**r) for r in rows]
+                "WHERE w.project_id=? ORDER BY t.created_at, t.rowid", (project_id,))
+            return [_task(r) for r in rows]
 
     def transition_task(self, tid: str, to: TaskState, expected_version: int,
                         evidence_id: str | None = None) -> Task:
         """`evidence_id` must reference verified evidence (QA/test) to reach DONE (spec 5.3)."""
+        with self.db.tx() as c:
+            self.transition_task_in_tx(c, tid, to, expected_version, evidence_id)
+        return self.get_task(tid)
+
+    def transition_task_in_tx(self, c, tid: str, to: TaskState, expected_version: int,
+                              evidence_id: str | None = None) -> None:
         if to == TaskState.DONE and not evidence_id:
             raise EvidenceRequired("Task.DONE requires verified evidence")
-        with self.db.tx() as c:
-            row = c.execute("SELECT t.*, w.project_id FROM tasks t JOIN work_orders w USING(work_order_id) "
-                            "WHERE task_id=?", (tid,)).fetchone()
-            if row is None:
-                raise KeyError(tid)
-            if row["version"] != expected_version:
-                raise ConflictError(f"task {tid} changed concurrently (atomic claim failed)")
-            sm.check(sm.TASK, TaskState(row["state"]), to)
-            n = c.execute("UPDATE tasks SET state=?, version=version+1, updated_at=? "
-                          "WHERE task_id=? AND version=?", (to, utcnow(), tid, expected_version)).rowcount
-            if n == 0:
-                raise ConflictError(f"task {tid} changed concurrently (atomic claim failed)")
-            self.log_event(c, "task.transition", "task", tid, row["project_id"],
-                           src=row["state"], dst=str(to), evidence_id=evidence_id)
-        return self.get_task(tid)
+        row = c.execute("SELECT t.*, w.project_id FROM tasks t JOIN work_orders w USING(work_order_id) "
+                        "WHERE task_id=?", (tid,)).fetchone()
+        if row is None:
+            raise KeyError(tid)
+        if row["version"] != expected_version:
+            raise ConflictError(f"task {tid} changed concurrently (atomic claim failed)")
+        sm.check(sm.TASK, TaskState(row["state"]), to)
+        n = c.execute("UPDATE tasks SET state=?, version=version+1, updated_at=? "
+                      "WHERE task_id=? AND version=?", (to, utcnow(), tid, expected_version)).rowcount
+        if n == 0:
+            raise ConflictError(f"task {tid} changed concurrently (atomic claim failed)")
+        self.log_event(c, "task.transition", "task", tid, row["project_id"],
+                       src=row["state"], dst=str(to), evidence_id=evidence_id)
 
     # ---- assignments / sessions / runs --------------------------------------------------
     def create_assignment(self, task_id: str, role_id: str, provider_id: str) -> Assignment:
