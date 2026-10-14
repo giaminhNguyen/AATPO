@@ -4,11 +4,32 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QHeaderView, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
+    QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
 )
 
 from aatpo.gui.pages.base import Page
 from aatpo.projects.registry import RegistryError
+
+
+def parse_command(text: str) -> list[str]:
+    """Split on spaces, honouring double quotes; no shell is involved anywhere."""
+    out, cur, quoted = [], "", False
+    for ch in text.strip():
+        if ch == '"':
+            quoted = not quoted
+        elif ch == " " and not quoted:
+            if cur:
+                out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if cur:
+        out.append(cur)
+    return out
+
+
+def join_command(argv: list[str]) -> str:
+    return " ".join(f'"{a}"' if " " in a else a for a in argv)
 
 
 class ConfirmProjectDialog(QDialog):
@@ -44,6 +65,7 @@ class ProjectsPage(Page):
         bar = QHBoxLayout()
         for text, fn in (("Mở dự án có sẵn…", self.add_existing), ("Tạo dự án mới…", self.create_new),
                          ("Chọn làm dự án hiện tại", self.select_current), ("Liên kết lại thư mục…", self.relink),
+                         ("Lệnh kiểm thử…", self.set_test_command), ("Tên người lưu phiên bản…", self.set_identity),
                          ("Lưu trữ", self.archive)):
             b = QPushButton(text)
             b.clicked.connect(fn)
@@ -155,6 +177,41 @@ class ProjectsPage(Page):
         except RegistryError as e:
             self._warn(str(e))
         self.win.refresh_all()
+
+    def ask_text(self, title: str, label: str, default: str = "") -> str | None:
+        text, ok = QInputDialog.getText(self, title, label, QLineEdit.Normal, default)
+        return text if ok else None
+
+    def set_test_command(self) -> None:
+        """User confirms (or edits) the command AATPO may run as test evidence. Only allowlisted launchers are accepted."""
+        pid = self._selected_id()
+        if not pid:
+            return
+        from aatpo.evidence.tests import CommandRejected, detect_command
+        p = self.services.registry.get(pid)
+        cur = p.test_command or detect_command(Path(p.root_path)) or []
+        text = self.ask_text("Lệnh kiểm thử", "Lệnh chạy kiểm thử của dự án (để trống = không có):", join_command(cur))
+        if text is None:
+            return
+        try:
+            self.services.registry.set_test_command(pid, parse_command(text) or None)
+        except (CommandRejected, ValueError) as e:
+            self._warn(str(e))
+        self.win.refresh_all()
+
+    def set_identity(self) -> None:
+        pid = self._selected_id()
+        if not pid:
+            return
+        p = self.services.registry.get(pid)
+        name = self.ask_text("Người lưu phiên bản", "Tên sẽ ghi trong lịch sử phiên bản của dự án này:")
+        email = self.ask_text("Người lưu phiên bản", "Email sẽ ghi trong lịch sử phiên bản (chỉ áp dụng cho dự án này):") if name else None
+        if name and email:
+            from aatpo.projects.git_service import GitError
+            try:
+                self.services.git.set_local_identity(Path(p.root_path), name, email)
+            except GitError as e:
+                self._warn(str(e))
 
     def archive(self) -> None:
         pid = self._selected_id()

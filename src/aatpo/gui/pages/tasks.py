@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from aatpo.customer.representative import STATE_VI as WO_STATE_VI
 from aatpo.domain.models import ROLE_TITLES_VI, TaskState as T, WorkOrderState as W
 from aatpo.evidence import artifacts
-from aatpo.gui.pages.base import EmptyStatePage, Page, clear_layout
+from aatpo.gui.pages.base import Page, clear_layout
 from aatpo.office.approvals import ApprovalError
 
 STATE_VI = {
@@ -35,7 +35,8 @@ class TasksPage(Page):
         self.btn = {}
         for key, text, fn in (("start", "Bắt đầu", self.start_selected), ("pause", "Tạm dừng", self.pause_selected),
                               ("resume", "Tiếp tục", self.resume_selected), ("detail", "Xem chi tiết", self.show_detail),
-                              ("result", "Xem kết quả", self.show_result)):
+                              ("result", "Xem kết quả", self.show_result),
+                              ("integrate", "Tích hợp vào nhánh chính", self.integrate_selected)):
             b = QPushButton(text)
             b.clicked.connect(fn)
             bar.addWidget(b)
@@ -117,6 +118,8 @@ class TasksPage(Page):
         self.btn["pause"].setEnabled(live)
         self.btn["resume"].setEnabled(bool(wo and not live and (wo.state in HALTED or (wo.state == W.EXECUTING and stuck))))
         self.btn["detail"].setEnabled(wo is not None)
+        self.btn["integrate"].setEnabled(bool(wo and wo.state in (W.PACKAGING, W.DELIVERED)
+                                              and wo.integration_status in ("ready", "conflict")))
         self.btn["result"].setEnabled(bool(wid and any(artifacts.latest(self.services.db, t.task_id) for t in tasks)))
 
     # ---- actions ------------------------------------------------------------------------------------
@@ -152,6 +155,21 @@ class TasksPage(Page):
         if wid:
             self.services.manager.resume(wid)
             self.start(wid)
+
+    def integrate_selected(self) -> None:
+        wid = self.selected_wo()
+        if not wid:
+            return
+        wo = self.services.store.get_work_order(wid)
+        proj = self.services.registry.get(wo.project_id)
+        if QMessageBox.question(self, "Tích hợp vào nhánh chính",
+                                f"AATPO sẽ gộp các thay đổi đã kiểm tra vào nhánh “{proj.git_default_branch or 'chính'}” của dự án "
+                                f"“{proj.display_name}” theo kiểu gộp thẳng (không ghi đè, không xóa lịch sử). Bạn đồng ý?",
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        res = self.services.manager.integrate_now(wid)
+        self.status.setText("" if res.outcome == "completed" else res.message)
+        self.win.refresh_all()
 
     def _on_job(self, key: str, result, exc) -> None:
         if key.startswith("run:"):
@@ -314,8 +332,3 @@ class ApprovalsPage(Page):
                        if approve else "Đã ghi nhận: bạn không đồng ý phạm vi này. Hãy cho tôi biết bạn muốn điều chỉnh gì.")
                 self.services.chat.save(a.project_id, "assistant", msg, a.work_order_id, kind="approval_result")
         self.win.refresh_all()
-
-
-class ResultsPage(EmptyStatePage):
-    title_vi = "Kết quả"
-    message = "Chưa có kết quả nào để xem."

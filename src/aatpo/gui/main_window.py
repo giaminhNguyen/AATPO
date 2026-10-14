@@ -6,7 +6,8 @@ from aatpo.gui.pages.home_chat import HomePage
 from aatpo.gui.bridges.background_jobs import BackgroundJobs
 from aatpo.gui.pages.projects import ProjectsPage
 from aatpo.gui.pages.settings import SettingsPage
-from aatpo.gui.pages.tasks import ApprovalsPage, ResultsPage, TasksPage
+from aatpo.gui.pages.results import ResultsPage
+from aatpo.gui.pages.tasks import ApprovalsPage, TasksPage
 from aatpo.services import Services
 
 NAV = (("home", "Văn phòng AI", HomePage), ("projects", "Dự án", ProjectsPage),
