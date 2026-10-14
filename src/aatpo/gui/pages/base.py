@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+
+from aatpo.services import Services
+
+
+class Page(QWidget):
+    """Base page: has the shared services and a refresh() called on show / data change."""
+    title_vi = ""
+
+    def __init__(self, services: Services, window):
+        super().__init__()
+        self.services, self.win = services, window
+        self.root = QVBoxLayout(self)
+        h = QLabel(self.title_vi)
+        h.setObjectName("pageTitle")
+        self.root.addWidget(h)
+
+    def refresh(self) -> None:  # overridden
+        pass
+
+
+class EmptyStatePage(Page):
+    message = ""
+
+    def __init__(self, services, window):
+        super().__init__(services, window)
+        self.note = QLabel(self.message)
+        self.note.setWordWrap(True)
+        self.note.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.root.addWidget(self.note, 1)
