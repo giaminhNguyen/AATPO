@@ -140,7 +140,7 @@ def test_real_fix_branch_commit_tests_qa_integration_report(tmp_path):
     # report
     from aatpo.evidence import artifacts
     rep = artifacts.read(svc.db, artifacts.latest(svc.db, ts["review"].task_id, "report")["artifact_id"])
-    for needle in ("# Báo cáo bàn giao", "Sửa lỗi hàm cộng hai số", "ĐẠT", "Đã tích hợp vào nhánh chính", "calc.py", "không phải bản sao lưu",
+    for needle in ("# Báo cáo bàn giao", "Sửa lỗi hàm cộng hai số", "ĐẠT", "Đã tích hợp vào nhánh “main”", "calc.py", "không phải bản sao lưu",
                    "không độc lập hoàn toàn"):
         assert needle in rep, needle
 

@@ -12,6 +12,8 @@ Host: Windows 11 Pro 10.0.26200. Rows describe what was **actually run**; "UNVER
 - Codex run: `codex exec --json -s read-only --skip-git-repo-check -C <project> -o <tmp>/last.txt -`
 - Codex resume: `codex exec resume --json --skip-git-repo-check -c sandbox_mode="read-only" -o <tmp>/last.txt <thread_id> -` (cwd = project; `resume` has no `-s`/`-C`)
 - Claude run: `claude -p --output-format json --permission-mode plan --tools Read,Grep,Glob` (cwd = project); resume adds `--resume <session_id>`
+- Claude write mode (G4): `claude -p --output-format json --permission-mode acceptEdits --tools Read,Grep,Glob,Edit,Write` (cwd = project; no Bash) - **verified 2026-10-14** (fixed `calc.py` in a disposable repo).
+- Codex write mode: `codex exec ... -s workspace-write ...` - **UNVERIFIED**.
 - Never used: `--dangerously-bypass-approvals-and-sandbox`, `--dangerously-skip-permissions`, `--yolo`.
 
 ## Parser status

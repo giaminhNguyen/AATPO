@@ -57,9 +57,12 @@ def build_report(services, wo_id: str, git_diffstat: str | None = None) -> str:
         L.append(f"| {t.title[:70]} | {ROLE_TITLES_VI.get(t.role_id or '', '')} | {TASK_VI.get(t.state, t.state)}{extra} | {chk} |")
     L += ["", "## Kiểm thử", ""]
     if tests:
-        for tr in tests:
-            L.append(f"- `{' '.join(json.loads(tr['argv']))}` → **{ {'passed': 'ĐẠT', 'failed': 'KHÔNG ĐẠT', 'timeout': 'QUÁ GIỜ', 'error': 'LỖI'}[tr['status']] }** "
-                     f"({tr['duration_ms']} ms)")
+        verdict = {"passed": "ĐẠT", "failed": "KHÔNG ĐẠT", "timeout": "QUÁ GIỜ", "error": "LỖI"}
+        for i, tr in enumerate(tests):
+            argv = json.loads(tr["argv"])
+            cmd = " ".join([Path(argv[0]).stem, *argv[1:]])      # readable: `python -m pytest -q`, not the full venv path
+            phase = "trước khi bàn giao (kiểm tra cuối)" if i == len(tests) - 1 and len(tests) > 1 else "sau khi sửa"
+            L.append(f"- Lần {i + 1}, {phase}: `{cmd}` → **{verdict[tr['status']]}** ({tr['duration_ms']} ms)")
     else:
         L.append("- **Chưa có lệnh kiểm thử tự động cho dự án này**, nên kết quả chỉ được kiểm tra bằng đối chiếu của bước kiểm tra, chưa được chạy thử.")
     L += ["", "## Phiên bản đã lưu", ""]
@@ -72,7 +75,9 @@ def build_report(services, wo_id: str, git_diffstat: str | None = None) -> str:
         L.append("- Lần này hệ thống làm ở **chế độ chỉ đọc**: kết quả là đề xuất bằng văn bản, **chưa có tệp nào bị sửa**.")
     else:
         L.append("- Chưa có phiên bản nào được lưu.")
-    L += ["", f"**Tích hợp:** {INTEGRATION_VI.get(wo.integration_status, wo.integration_status)}" + (f" — {wo.integration_note}" if wo.integration_note else ""), ""]
+    integ = INTEGRATION_VI.get(wo.integration_status, wo.integration_status)
+    L += ["", f"**Tích hợp:** {wo.integration_note if wo.integration_status == 'integrated' and wo.integration_note else integ}"
+          + (f" — {wo.integration_note}" if wo.integration_note and wo.integration_status != "integrated" else ""), ""]
     L += ["## Điều chưa làm và rủi ro", ""]
     later = [f["name"] for f in feats if f["priority"] in ("LATER", "DROP")]
     if later:

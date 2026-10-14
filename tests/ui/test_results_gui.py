@@ -39,7 +39,7 @@ def test_results_page_report_diff_save_copy_open_revise_accept(qapp, tmp_path, m
     page.refresh()
     assert page.list.count() == 1 and "Hoàn thành" in page.list.item(0).text() and not page.empty.isVisibleTo(page)
     md = page.report.toPlainText()
-    assert "Báo cáo bàn giao" in md and "Đã tích hợp vào nhánh chính" in md and "ĐẠT" in md
+    assert "Báo cáo bàn giao" in md and "Đã tích hợp vào nhánh" in md and "ĐẠT" in md
     assert all(b.isEnabled() for b in page.btn.values())
 
     opened = []

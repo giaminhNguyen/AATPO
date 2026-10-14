@@ -509,11 +509,16 @@ class OfficeManager:
         if status == "conflict":   # uncertain merge state: never label it delivered
             return RunSummary("blocked", note)
         from aatpo.delivery.report import build_report, save_report
-        ctx = SimpleNamespace(store=self.store, db=self.db, registry=self.registry, manager=self)
-        save_report(ctx, wo_id, build_report(ctx, wo_id, self._diffstat(wo_id)))
         wo = self.store.get_work_order(wo_id)
-        if wo.state == W.PACKAGING:
+        if wo.state == W.PACKAGING:      # state first, so the report states the real outcome ("Hoàn thành")
             self.store.transition_work_order(wo_id, W.DELIVERED, wo.version)
+        ctx = SimpleNamespace(store=self.store, db=self.db, registry=self.registry, manager=self)
+        try:
+            save_report(ctx, wo_id, build_report(ctx, wo_id, self._diffstat(wo_id)))
+        except Exception as e:      # a report failure must be visible, never silent
+            with self.db.tx() as c:
+                self.store.log_event(c, "report.failed", "work_order", wo_id, wo.project_id, error=type(e).__name__)
+            return RunSummary("completed", "Đã hoàn thành nhưng chưa lập được báo cáo; hãy xem Chi tiết")
         return RunSummary("completed", "Đã hoàn thành, có bằng chứng và báo cáo bàn giao")
 
     def _diffstat(self, wo_id: str) -> str | None:
