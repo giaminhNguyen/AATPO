@@ -31,7 +31,8 @@ class Services:
     manager: OfficeManager
 
     @classmethod
-    def create(cls, paths: AppPaths, git_exe: str | None = None, adapters: dict | None = None) -> "Services":
+    def create(cls, paths: AppPaths, git_exe: str | None = None, adapters: dict | None = None,
+               write_mode: bool = False) -> "Services":
         paths.ensure()
         db = Database(paths.db_path, backup_dir=paths.backups)
         store = Store(db)
@@ -42,7 +43,7 @@ class Services:
         approvals = ApprovalService(store)
         sessions = SessionManager(store, adapters)
         manager = OfficeManager(store, registry, git, sessions, approvals, paths.home / "artifacts",
-                                load_config(paths.home / "config" / "office.toml"))
+                                load_config(paths.home / "config" / "office.toml"), write_mode=write_mode)
         chat = ChatService(store, registry, approvals)
         chat.manager = manager
         manager.reconcile_after_restart()   # uncertain work gets an approval request, never an automatic replay

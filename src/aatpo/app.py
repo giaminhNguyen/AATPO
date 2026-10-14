@@ -13,7 +13,7 @@ def main(argv: list[str] | None = None) -> int:
     from aatpo.gui.main_window import MainWindow
 
     app = QApplication(argv if argv is not None else sys.argv)
-    services = Services.create(default_paths())
+    services = Services.create(default_paths(), write_mode=True)
     win = MainWindow(services)
     win.show()
     code = app.exec()

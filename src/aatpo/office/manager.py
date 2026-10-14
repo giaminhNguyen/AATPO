@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
+from types import SimpleNamespace
 
 from aatpo.agents.prompt_builder import build_task_prompt
 from aatpo.agents.session_manager import ScopeNotApproved, SessionManager
@@ -14,7 +16,7 @@ from aatpo.domain.plan import PlanRejected, TaskPlan
 from aatpo.evidence import artifacts
 from aatpo.office import cli_router, planner
 from aatpo.office.approvals import ApprovalService
-from aatpo.projects.git_policies import prepare_task_branch
+from aatpo.office.write_flow import WriteFlow
 from aatpo.projects.git_service import GitService
 from aatpo.projects.registry import ProjectRegistry
 
@@ -48,7 +50,8 @@ class OfficeManager:
         self.store, self.registry, self.git, self.sessions = store, registry, git, sessions
         self.approvals, self.db, self.root = approvals, store.db, artifacts_root
         self.cfg = cfg or OfficeConfig()
-        self.write_mode = write_mode  # G3 runs read-only adapters; G4 enables writes + task branches
+        self.write_mode = write_mode  # False: read-only adapters (proposals only). True: real edits on task branches
+        self.flow = WriteFlow(self)
 
     # ===== planning ============================================================================
     def _approved_scope(self, wo_id: str) -> tuple[str, str, list[str], list[str]]:
@@ -189,7 +192,10 @@ class OfficeManager:
             self.promote_ready(wo_id)
             task = self.next_task(wo_id, wo.project_id)
             if task is None:
-                return self._idle_summary(wo_id)
+                summary = self._idle_summary(wo_id)
+                if summary.outcome == "completed" and wo.state == W.EXECUTING:
+                    return await self._finalize(wo_id)
+                return summary
             res = await self._run_task(wo, task)
             if res is not None:
                 return res
@@ -259,31 +265,31 @@ class OfficeManager:
                 return RunSummary("paused_quota", "Không có trợ lý AI nào sẵn sàng (chưa đăng nhập hoặc hết hạn mức)")
             if prev and provider != prev and self._handoffs(task) >= self.cfg.max_handoffs_per_task:
                 return self._give_up(wo, task, "đã đổi trợ lý quá số lần cho phép")
-            # 4. git branch policy for write-capable tasks
-            if task.writes and self.write_mode:
-                br = prepare_task_branch(self.git, self.db, project, wo, task)
-                if br.status == "blocked":
+            # 4. write-capable task: Git safety preflight (repo, identity, clean tree, own branch)
+            write = bool(task.writes and self.write_mode)
+            if write:
+                blk = self.flow.preflight(wo, project, task)
+                if blk is not None:
                     t = self.store.get_task(task.task_id)
                     self.store.transition_task(t.task_id, T.READY, t.version)
-                    self._block(self.store.get_task(task.task_id), "Thư mục dự án có thay đổi chưa lưu hoặc nhánh bị xung đột; "
-                                "hãy xử lý rồi bấm Tiếp tục" if br.reason == "dirty_repo" else f"Git: {br.reason}")
-                    self._fail_work_order(wo, f"git:{br.reason}")
-                    return RunSummary("blocked", self.store.get_task(task.task_id).blocked_reason or "")
+                    self._block(self.store.get_task(task.task_id), blk.reason)
+                    self._fail_work_order(wo, f"git:{blk.code}")
+                    return RunSummary("blocked", blk.reason)
             # 5. session + run
             asg = self._assignment(task, provider)
             t = self.store.get_task(task.task_id)
             task = self.store.transition_task(t.task_id, T.RUNNING, t.version)
             brief = self._brief(task, asg.assignment_id)
             prompt = build_task_prompt(wo, task, scope_text=self._scope_text(wo.work_order_id),
-                                       inputs=self._inputs(task), brief=brief, read_only=not self.write_mode)
-            run, res = await self.sessions.execute(asg.assignment_id, prompt, project.root_path, brief=brief,
+                                       inputs=self._inputs(task), brief=brief, read_only=not write)
+            run, res = await self.sessions.execute(asg.assignment_id, prompt, project.root_path, brief=brief, write=write,
                                                    timeout=self.cfg.run_timeout_seconds)
-            return self._after_run(wo, task, run, res)
+            return await self._after_run(wo, project, task, run, res, write)
         finally:
             if locked:
                 self._unlock(project.project_id, task.task_id)
 
-    def _after_run(self, wo: WorkOrder, task: Task, run, res) -> RunSummary | None:
+    async def _after_run(self, wo: WorkOrder, project, task: Task, run, res, write: bool) -> RunSummary | None:
         t = self.store.get_task(task.task_id)
         if res.ok:
             aid = artifacts.save_text(self.db, self.root, project_id=wo.project_id, work_order_id=wo.work_order_id,
@@ -294,6 +300,10 @@ class OfficeManager:
                 return self._apply_review(wo, t, res.text, aid)
             if not t.writes:
                 return self._auto_review(wo, t, aid)   # analysis/design/packaging: DONE only on verified evidence
+            if write:   # real edits: check paths/secrets, run tests, commit - failures go straight to bounded rework
+                col = await self.flow.collect(wo, project, t)
+                if not col.passed:
+                    return self._auto_fail(wo, t, aid, col.finding or "Kiểm tra tự động không đạt.")
             return None   # write tasks wait in REVIEW for an independent QA task
         if res.cancelled:
             self.store.transition_task(t.task_id, T.PAUSED, t.version)
@@ -340,9 +350,13 @@ class OfficeManager:
                 continue
             art = artifacts.latest(self.db, d.task_id)
             evidence_ok = bool(art) and artifacts.verify(self.db, art["artifact_id"], d.task_id)
+            why = "Không có bằng chứng hợp lệ cho kết quả này."
+            if evidence_ok and d.writes and self.write_mode:
+                evidence_ok, w2 = self.flow.evidence_ok(d, self.registry.get(wo.project_id))
+                why = w2 or why
             passed = verdict == "pass" and evidence_ok
             rid = new_id("REV")
-            note = findings if verdict == "fail" else (findings if evidence_ok else "Không có bằng chứng hợp lệ cho kết quả này.")
+            note = findings if verdict == "fail" else (findings if evidence_ok else why)
             with self.db.tx() as c:
                 c.execute("INSERT INTO reviews VALUES(?,?,?,?,?,?,?)", (rid, d.task_id, qa.task_id,
                           "pass" if passed else "fail", note or "(không có ghi chú)", art["artifact_id"] if art else None, utcnow()))
@@ -362,6 +376,16 @@ class OfficeManager:
             return RunSummary("blocked", f"Công việc “{exhausted.title}” không đạt sau nhiều lần làm lại")
         qa = self.store.transition_task(qa.task_id, T.REWORK, qa.version)
         self.store.transition_task(qa.task_id, T.READY, qa.version)
+        return None
+
+    def _auto_fail(self, wo: WorkOrder, t: Task, artifact_id: str, finding: str) -> RunSummary | None:
+        """Mechanical checks (no changes / forbidden paths / secrets / failing tests) reject BEFORE QA is spent."""
+        with self.db.tx() as c:
+            c.execute("INSERT INTO reviews VALUES(?,?,?,?,?,?,?)", (new_id("REV"), t.task_id, t.task_id, "fail",
+                      finding[:2000], artifact_id, utcnow()))
+        if self._send_back(t):
+            self._fail_work_order(wo, "vượt quá số lần làm lại")
+            return RunSummary("blocked", f"Công việc “{t.title}” không đạt sau nhiều lần làm lại: {finding[:200]}")
         return None
 
     def _auto_review(self, wo: WorkOrder, t: Task, artifact_id: str) -> RunSummary | None:
@@ -448,10 +472,71 @@ class OfficeManager:
     def _inputs(self, task: Task) -> list[tuple[str, str]]:
         out = []
         for d in self.store.dependencies(task.task_id):
-            art = artifacts.latest(self.db, d.task_id)
-            if art:
-                out.append((f"kết quả của công việc “{d.title}”", artifacts.read(self.db, art["artifact_id"])))
+            for kind, label in (("agent_output", "kết quả của công việc"), ("diff", "thay đổi thực tế (diff) của công việc"),
+                                ("test_output", "kết quả chạy kiểm thử của công việc")):
+                art = artifacts.latest(self.db, d.task_id, kind)
+                if art:
+                    out.append((f"{label} “{d.title}”", artifacts.read(self.db, art["artifact_id"])))
         return out
+
+    # ===== delivery ====================================================================================
+    async def _finalize(self, wo_id: str) -> RunSummary:
+        """All tasks DONE with evidence -> final verification -> integration -> report -> DELIVERED."""
+        wo = self.store.get_work_order(wo_id)
+        project = self.registry.get(wo.project_id)
+        write_tasks = [t for t in self.store.list_work_order_tasks(wo_id, self._current_plan_version(wo_id)) if t.writes]
+        wo = self.store.transition_work_order(wo_id, W.VERIFYING, wo.version)
+        if self.write_mode and write_tasks and project.test_command:
+            from aatpo.evidence.tests import run_tests
+            r = await run_tests(self.db, self.root, project_id=project.project_id, work_order_id=wo_id,
+                                task_id=write_tasks[-1].task_id, argv=project.test_command, cwd=project.root_path,
+                                timeout=self.cfg.run_timeout_seconds)
+            if not r.ok:
+                self.store.transition_work_order(wo_id, W.BLOCKED, self.store.get_work_order(wo_id).version)
+                return RunSummary("blocked", f"Kiểm thử cuối cùng KHÔNG đạt ({r.status}); công việc chưa được bàn giao.")
+        self.store.transition_work_order(wo_id, W.PACKAGING, self.store.get_work_order(wo_id).version)
+        if self.write_mode and write_tasks:
+            status, note = self.flow.integrate(wo_id, explicit=False)
+        else:
+            status, note = "not_applicable", "Chế độ chỉ đọc: không có thay đổi tệp để tích hợp."
+        return self._deliver(wo_id, status, note)
+
+    def _deliver(self, wo_id: str, status: str, note: str) -> RunSummary:
+        with self.db.tx() as c:
+            c.execute("UPDATE work_orders SET integration_status=?, integration_note=? WHERE work_order_id=?", (status, note, wo_id))
+            wo = self.store.get_work_order(wo_id)
+            self.store.log_event(c, "integration", "work_order", wo_id, wo.project_id, status=status, note=note)
+        if status == "conflict":   # uncertain merge state: never label it delivered
+            return RunSummary("blocked", note)
+        from aatpo.delivery.report import build_report, save_report
+        ctx = SimpleNamespace(store=self.store, db=self.db, registry=self.registry, manager=self)
+        save_report(ctx, wo_id, build_report(ctx, wo_id, self._diffstat(wo_id)))
+        wo = self.store.get_work_order(wo_id)
+        if wo.state == W.PACKAGING:
+            self.store.transition_work_order(wo_id, W.DELIVERED, wo.version)
+        return RunSummary("completed", "Đã hoàn thành, có bằng chứng và báo cáo bàn giao")
+
+    def _diffstat(self, wo_id: str) -> str | None:
+        with self.db.lock:
+            rows = self.db.conn.execute("SELECT * FROM git_branches WHERE work_order_id=? ORDER BY created_at, rowid",
+                                        (wo_id,)).fetchall()
+            sha = self.db.conn.execute("SELECT sha FROM git_commit_events WHERE branch=? AND status='committed' "
+                                       "ORDER BY at DESC, rowid DESC LIMIT 1", (rows[-1]["name"],)).fetchone() if rows else None
+        if not rows or not sha or not rows[0]["base_sha"]:
+            return None
+        try:
+            project = self.registry.get(self.store.get_work_order(wo_id).project_id)
+            return self.git.diff_range(Path(project.root_path), rows[0]["base_sha"], sha["sha"], stat=True)
+        except Exception:
+            return None
+
+    def integrate_now(self, wo_id: str) -> RunSummary:
+        """User clicked 'Tích hợp vào nhánh chính' (explicit, action-specific consent). Also the retry after a conflict."""
+        wo = self.store.get_work_order(wo_id)
+        if wo.state not in (W.PACKAGING, W.DELIVERED):
+            return RunSummary("idle", "Công việc chưa sẵn sàng để tích hợp")
+        status, note = self.flow.integrate(wo_id, explicit=True)
+        return self._deliver(wo_id, status, note)
 
     # ===== user controls ===============================================================================
     async def pause(self, wo_id: str) -> None:

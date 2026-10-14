@@ -65,6 +65,14 @@ class Script:
         return True
 
 
+def write_fn(kind, req, sid, n):
+    """Stand-in for a write-capable agent: really edits a file inside the project (only when write mode is on)."""
+    if req.write:
+        from pathlib import Path
+        (Path(req.project_root) / f"change_{n}.txt").write_text(f"edit {n}\n", encoding="utf-8")
+    return None
+
+
 def make(tmp_path, *scripts, pref=None, **cfg):
     adapters = {s.provider_id: s for s in scripts}
     svc = Services.create(AppPaths(tmp_path / "home"), adapters=adapters)
@@ -180,7 +188,7 @@ def test_end_to_end_dependency_order_sessions_and_evidence(tmp_path):
     assert len(ev) == 3 and all('"evidence_id": "' in e["detail"] and '"evidence_id": null' not in e["detail"] for e in ev)
     rv = svc.db.conn.execute("SELECT * FROM reviews WHERE task_id=?", (ts["implement"].task_id,)).fetchone()
     assert rv["verdict"] == "pass" and rv["reviewer_task_id"] == ts["review"].task_id and rv["evidence_artifact_id"]
-    assert svc.store.get_work_order(wo.work_order_id).state == W.EXECUTING   # delivery/report is G4
+    assert svc.store.get_work_order(wo.work_order_id).state == W.DELIVERED   # report + delivery (G4); read-only mode => nothing to integrate
     assert ad.max_active == 1                                              # concurrency = 1
 
 
@@ -443,7 +451,7 @@ def repo_project(tmp_path, svc_adapters, dirty=False):
 
 
 def test_task_branch_created_for_write_task(tmp_path):
-    ad = Script()
+    ad = Script(write_fn)
     svc, p, d = repo_project(tmp_path, {"fake": ad})
     wo = approved(svc, p, "Sửa lỗi đăng nhập")
     svc.manager.create_plan(wo.work_order_id)
@@ -458,7 +466,7 @@ def test_task_branch_created_for_write_task(tmp_path):
 
 
 def test_dirty_repo_pauses_safely_and_preserves_edits(tmp_path):
-    ad = Script()
+    ad = Script(write_fn)
     svc, p, d = repo_project(tmp_path, {"fake": ad}, dirty=True)
     wo = approved(svc, p, "Sửa lỗi đăng nhập")
     svc.manager.create_plan(wo.work_order_id)

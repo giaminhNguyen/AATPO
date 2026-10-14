@@ -17,7 +17,7 @@ class SessionManager:
     def __init__(self, store: Store, adapters: dict):
         self.store, self.adapters = store, adapters
 
-    async def execute(self, assignment_id: str, prompt: str, project_root: str, *, brief: str = "",
+    async def execute(self, assignment_id: str, prompt: str, project_root: str, *, brief: str = "", write: bool = False,
                       timeout: int = 900, idempotency_key: str | None = None) -> tuple[ProcessRun, AgentRunResult]:
         asg = self.store.get_assignment(assignment_id)
         wo = self.store.get_work_order(self.store.get_task(asg.task_id).work_order_id)
@@ -33,7 +33,7 @@ class SessionManager:
         run = self.store.create_run(session.session_id, idempotency_key or new_id("IDEM"))
         req = AgentRunRequest(session_id=session.session_id, run_id=run.run_id, project_root=project_root,
                               prompt=(f"{session.handoff_brief}\n\n{prompt}" if session.handoff_brief else prompt),
-                              timeout_seconds=timeout)
+                              timeout_seconds=timeout, write=write)
         self.store.transition_run(run.run_id, RunState.RUNNING)
         try:
             res = await (adapter.resume(req, resume_id) if resume_id else adapter.run(req))

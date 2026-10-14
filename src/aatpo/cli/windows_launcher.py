@@ -49,12 +49,14 @@ async def _kill_tree(proc: asyncio.subprocess.Process) -> None:
 
 
 async def run_process(argv: list[str], *, cwd: str | None, stdin_text: str | None = None, timeout: float = 900,
-                      cancel: asyncio.Event | None = None,
+                      cancel: asyncio.Event | None = None, env: dict[str, str] | None = None,
                       on_line: Callable[[str], None] | None = None) -> ProcResult:
     exe = resolve_executable(argv[0])
     args = argv[1:]
     kw = dict(cwd=cwd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
               stderr=asyncio.subprocess.PIPE)
+    if env:
+        kw["env"] = {**os.environ, **env}
     if IS_WIN:
         import subprocess
         kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW

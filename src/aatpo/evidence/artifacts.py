@@ -17,8 +17,11 @@ def save_text(db: Database, root: Path, *, project_id: str, work_order_id: str, 
     f.write_bytes(data)
     aid = new_id("ART")
     with db.tx() as c:
+        # run_id is only a foreign key for real process runs; reports/diffs/test output use it as a file name only
+        real = c.execute("SELECT 1 FROM process_runs WHERE run_id=?", (run_id,)).fetchone() is not None
         c.execute("INSERT INTO artifacts VALUES(?,?,?,?,?,?,?,?,?)",
-                  (aid, project_id, work_order_id, task_id, run_id, str(f), hashlib.sha256(data).hexdigest(), kind, utcnow()))
+                  (aid, project_id, work_order_id, task_id, run_id if real else None, str(f),
+                   hashlib.sha256(data).hexdigest(), kind, utcnow()))
     return aid
 
 
@@ -36,10 +39,13 @@ def verify(db: Database, artifact_id: str, task_id: str) -> bool:
     return bool(data.strip()) and hashlib.sha256(data).hexdigest() == r["sha256"]
 
 
-def latest(db: Database, task_id: str) -> dict | None:
+def latest(db: Database, task_id: str, kind: str | None = "agent_output") -> dict | None:
+    """Newest artifact of this task; `kind=None` means any kind."""
+    q, a = "SELECT * FROM artifacts WHERE task_id=?", [task_id]
+    if kind:
+        q, a = q + " AND kind=?", a + [kind]
     with db.lock:
-        r = db.conn.execute("SELECT * FROM artifacts WHERE task_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
-                            (task_id,)).fetchone()
+        r = db.conn.execute(q + " ORDER BY created_at DESC, rowid DESC LIMIT 1", a).fetchone()
     return dict(r) if r else None
 
 

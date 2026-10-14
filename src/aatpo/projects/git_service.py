@@ -9,11 +9,26 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Only these subcommands may ever be executed by this service.
-_ALLOWED = {"rev-parse", "status", "init", "add", "commit", "config", "symbolic-ref", "diff", "log", "switch"}
+_ALLOWED = {"rev-parse", "status", "init", "add", "commit", "config", "symbolic-ref", "diff", "log", "switch",
+            "merge", "merge-base", "restore"}
 _BRANCH = re.compile(r"^task/[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
+_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$")
+_SHA = re.compile(r"^[0-9a-f]{7,40}$")
 
 
 class GitError(RuntimeError):
+    pass
+
+
+class DirtyRepo(GitError):
+    pass
+
+
+class MissingIdentity(GitError):
+    pass
+
+
+class NotFastForward(GitError):
     pass
 
 
@@ -112,5 +127,96 @@ class GitService:
         return base
 
 
-class DirtyRepo(GitError):
-    pass
+    # ---- G4: write workflow (every command is fixed-shape; refs/paths are validated) -----------------------
+    def current_branch(self, path: Path) -> str | None:
+        r = self._run(path, "symbolic-ref", "--short", "-q", "HEAD")
+        return r.stdout.strip() or None
+
+    def changed_paths(self, path: Path) -> list[str]:
+        """Paths changed in the working tree (porcelain v1, NUL-separated so any filename is safe)."""
+        r = self._run(path, "status", "--porcelain=v1", "-z", "--untracked-files=all", check=True)
+        out, parts = [], r.stdout.split("\0")
+        i = 0
+        while i < len(parts):
+            e = parts[i]
+            i += 1
+            if len(e) < 4:
+                continue
+            code, name = e[:2], e[3:]
+            if "R" in code or "C" in code:   # rename/copy carries the source path as the next field
+                i += 1
+            out.append(name)
+        return out
+
+    def stage_paths(self, path: Path, paths: list[str]) -> None:
+        """Stage ONLY the given paths (never -A). Paths are passed after `--` so they cannot become options."""
+        if not paths:
+            raise GitError("không có tệp nào để lưu")
+        self._run(path, "add", "--", *paths, check=True)
+
+    def unstage_paths(self, path: Path, paths: list[str]) -> None:
+        """Index-only undo of `add` (`restore --staged`); the working tree is never touched."""
+        if paths:
+            self._run(path, "restore", "--staged", "--", *paths, check=True)
+
+    def commit_exists(self, path: Path, sha: str) -> bool:
+        return bool(_SHA.match(sha)) and self._run(path, "rev-parse", "--verify", "-q", f"{sha}^{{commit}}").exit_code == 0
+
+    def parent_sha(self, path: Path, sha: str) -> str | None:
+        if not _SHA.match(sha):
+            return None
+        r = self._run(path, "rev-parse", "--verify", "-q", f"{sha}^")
+        return r.stdout.strip() if r.exit_code == 0 else None
+
+    def staged_paths(self, path: Path) -> list[str]:
+        r = self._run(path, "diff", "--cached", "--name-only", "-z", check=True)
+        return [p for p in r.stdout.split("\0") if p]
+
+    def staged_diff(self, path: Path, limit: int = 400_000) -> str:
+        return self._run(path, "diff", "--cached", "--no-color", check=True).stdout[:limit]
+
+    def check_staged(self, path: Path) -> str:
+        """`git diff --cached --check` output ('' when clean). Callers decide what blocks."""
+        r = self._run(path, "diff", "--cached", "--check")
+        return (r.stdout + r.stderr).strip()
+
+    def commit_staged(self, path: Path, message: str) -> str:
+        if not self.identity(path):
+            raise MissingIdentity("Chưa có tên/email để ghi vào lịch sử phiên bản")
+        self._run(path, "commit", "-m", message, check=True)
+        return self.head_sha(path)
+
+    def set_local_identity(self, path: Path, name: str, email: str) -> None:
+        """Repo-local only, and only with values the user typed (never global, never invented)."""
+        name, email = name.strip(), email.strip()
+        if not name or "@" not in email or any(c in name + email for c in "\n\r\0"):
+            raise GitError("tên hoặc email không hợp lệ")
+        self._run(path, "config", "--local", "user.name", name, check=True)
+        self._run(path, "config", "--local", "user.email", email, check=True)
+
+    def diff_range(self, path: Path, base: str, head: str, stat: bool = False, limit: int = 400_000) -> str:
+        if not (_SHA.match(base) and _SHA.match(head)):
+            raise GitError("mã phiên bản không hợp lệ")
+        args = ["diff", "--no-color", *(["--stat"] if stat else []), f"{base}..{head}"]
+        return self._run(path, *args, check=True).stdout[:limit]
+
+    def is_ancestor(self, path: Path, ancestor: str, descendant: str) -> bool:
+        for ref in (ancestor, descendant):
+            if not _REF.match(ref):
+                raise GitError("tên nhánh không hợp lệ")
+        return self._run(path, "merge-base", "--is-ancestor", ancestor, descendant).exit_code == 0
+
+    def switch_branch(self, path: Path, name: str) -> None:
+        """Plain `git switch <existing branch>` (no -f, no -c). Fails, untouched, if it would lose edits."""
+        if not _REF.match(name) or not self.branch_exists(path, name):
+            raise GitError(f"nhánh không tồn tại: {name}")
+        self._run(path, "switch", name, check=True)
+
+    def merge_ff_only(self, path: Path, branch: str) -> str:
+        """The ONLY merge this service performs. Non-fast-forward => GitError, history untouched."""
+        if not _REF.match(branch):
+            raise GitError("tên nhánh không hợp lệ")
+        r = self._run(path, "merge", "--ff-only", branch)
+        if r.exit_code != 0:
+            raise NotFastForward((r.stderr or r.stdout).strip()[:300])
+        return self.head_sha(path)

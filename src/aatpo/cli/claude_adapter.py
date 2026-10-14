@@ -12,6 +12,9 @@ from aatpo.cli.windows_launcher import ProcResult
 
 REQUIRED_FLAGS = ("--print", "--output-format", "--permission-mode", "--resume", "--tools")
 BASE = ["-p", "--output-format", "json", "--permission-mode", "plan", "--tools", "Read,Grep,Glob"]
+# Write mode: edits auto-accepted INSIDE the project (cwd); no Bash tool, so the agent cannot run commands -
+# tests are run by AATPO itself as independent evidence.
+WRITE = ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--tools", "Read,Grep,Glob,Edit,Write"]
 
 
 class ClaudeAdapter(SubprocessAdapter):
@@ -19,10 +22,10 @@ class ClaudeAdapter(SubprocessAdapter):
     exe_name = "claude"
 
     def run_argv(self, req: AgentRunRequest, scratch: Path) -> list[str]:
-        return list(BASE)
+        return list(WRITE if req.write else BASE)
 
     def resume_argv(self, req: AgentRunRequest, sid: str, scratch: Path) -> list[str]:
-        return [*BASE, "--resume", sid]
+        return [*(WRITE if req.write else BASE), "--resume", sid]
 
     def parse(self, proc: ProcResult, scratch: Path) -> AgentRunResult:
         return parse_claude(proc.stdout, proc.stderr, proc.exit_code if proc.exit_code is not None else 1)

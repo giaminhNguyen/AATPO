@@ -110,6 +110,7 @@ class Project(_Row):
     repo_detected: bool = False
     git_auto_history: bool = False
     git_default_branch: str | None = None
+    test_command: list[str] | None = None
 
 
 class WorkOrder(_Row):
@@ -126,6 +127,8 @@ class WorkOrder(_Row):
     brief: str | None = None
     plan_mode: str | None = None
     pause_requested: bool = False
+    integration_status: str = "none"          # none | ready | integrated | conflict | not_applicable
+    integration_note: str | None = None
 
 
 class CLIProvider(_Row):

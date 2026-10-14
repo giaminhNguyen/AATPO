@@ -13,6 +13,7 @@ class AgentRunRequest(BaseModel):
     project_root: str
     prompt: str
     timeout_seconds: int = 900
+    write: bool = False   # True only for write-capable tasks the manager has authorised (git branch + clean tree)
 
 
 class AgentRunResult(BaseModel):

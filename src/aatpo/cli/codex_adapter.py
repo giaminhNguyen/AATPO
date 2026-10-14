@@ -17,12 +17,12 @@ class CodexAdapter(SubprocessAdapter):
     exe_name = "codex"
 
     def run_argv(self, req: AgentRunRequest, scratch: Path) -> list[str]:
-        return ["exec", "--json", "-s", "read-only", "--skip-git-repo-check", "-C", req.project_root,
+        return ["exec", "--json", "-s", "workspace-write" if req.write else "read-only", "--skip-git-repo-check", "-C", req.project_root,
                 "-o", str(scratch / "last.txt"), "-"]
 
     def resume_argv(self, req: AgentRunRequest, sid: str, scratch: Path) -> list[str]:
         # `exec resume` has no -s/-C: sandbox via config override, directory via the process cwd.
-        return ["exec", "resume", "--json", "--skip-git-repo-check", "-c", 'sandbox_mode="read-only"',
+        return ["exec", "resume", "--json", "--skip-git-repo-check", "-c", 'sandbox_mode="workspace-write"' if req.write else 'sandbox_mode="read-only"',
                 "-o", str(scratch / "last.txt"), sid, "-"]
 
     def parse(self, proc: ProcResult, scratch: Path) -> AgentRunResult:

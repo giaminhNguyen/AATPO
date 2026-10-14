@@ -116,7 +116,7 @@ def test_chat_start_and_pause_commands(qapp, tmp_path):
     chip.click()                                                         # "Theo dõi công việc" => starts the run
     page = w.pages["tasks"]
     pump(qapp, lambda: not page.running)
-    assert svc.store.get_work_order(wo.work_order_id).state == W.EXECUTING and svc.manager.progress(wo.work_order_id) == (2, 2)
+    assert svc.store.get_work_order(wo.work_order_id).state == W.DELIVERED and svc.manager.progress(wo.work_order_id) == (2, 2)
     w.close()
     svc.close()
 

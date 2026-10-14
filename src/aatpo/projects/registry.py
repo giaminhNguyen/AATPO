@@ -2,6 +2,7 @@
 The GUI calls this; it never touches SQL or git directly."""
 from __future__ import annotations
 
+import json
 import os
 import unicodedata
 from pathlib import Path
@@ -58,6 +59,7 @@ class ProjectRegistry:
         d = dict(r)
         for k in ("repo_detected", "git_auto_history"):
             d[k] = bool(d[k])
+        d["test_command"] = json.loads(d["test_command"]) if d.get("test_command") else None
         return Project(**d)
 
     def suggest(self, query: str) -> list[Project]:
@@ -168,3 +170,15 @@ class ProjectRegistry:
                       (str(root), _key(root), utcnow(), project_id))
             self.store.log_event(c, "project.relinked", "project", project_id, project_id, path=str(root))
         return self.get(project_id)
+
+    def set_test_command(self, project_id: str, argv: list[str] | None) -> Project:
+        """The user-confirmed command AATPO may run as test evidence (P1). None clears it."""
+        from aatpo.evidence.tests import validate_command
+        if argv is not None:
+            validate_command(list(argv))
+        with self.db.tx() as c:
+            c.execute("UPDATE projects SET test_command=?, updated_at=? WHERE project_id=?",
+                      (json.dumps(argv, ensure_ascii=False) if argv else None, utcnow(), project_id))
+            self.store.log_event(c, "project.test_command", "project", project_id, project_id, argv=argv)
+        return self.get(project_id)
+
